@@ -7,11 +7,11 @@ Squishy is an Android video compressor built to fix the flaws of the existing "C
 | # | Fix / Feature | Status |
 |---|---------------|--------|
 | 1 | Compress multiple videos at once (sequential queue) | Not started |
-| 2 | Compression survives app backgrounding/minimizing | Not started |
-| 3 | Progress bar reports accurate 0-100% for the whole run (not stuck after ~20%) | Not started |
-| 4 | Compression survives the screen turning off | Not started |
-| 5 | App is not killed when minimized (multitasking-friendly) | Not started |
-| 6 | Video library sortable by name, date modified, size, and duration | Not started |
+| 2 | Compression survives app backgrounding/minimizing | Done (PR #4) |
+| 3 | Progress bar reports accurate 0-100% for the whole run (not stuck after ~20%) | In progress (PR #6) |
+| 4 | Compression survives the screen turning off | Done (PR #4) |
+| 5 | App is not killed when minimized (multitasking-friendly) | Done (PR #4) |
+| 6 | Video library sortable by name, date modified, size, and duration | Done (PR #3) |
 
 **Done (scaffold):**
 - [x] Initial Android Studio project scaffold (Kotlin + Jetpack Compose + media3 dependencies)
@@ -63,8 +63,14 @@ Each fix/feature is delivered as its own branch → PR → passing CI → auto-m
 
 PR order:
 1. Scaffold + CI + empty app — **merged**
-2. `PROJECT.md` (this document)
-3. Video library + sorting
+2. `PROJECT.md` (this document) — **merged**
+3. Video library + sorting — **merged**
 4. Foreground-service compression engine
 5. Queue
 6. Progress reporting polish
+
+### Foreground service (PR #4)
+- `CompressionService` runs as a `mediaProcessing` foreground service with a persistent,
+  progress-updating notification and a Stop action.
+- minSdk is 26 because `foregroundServiceType="mediaProcessing"` requires API 26+.
+- media3 APIs are `@UnstableApi`; the project opts in via `app/lint.xml`.
