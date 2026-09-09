@@ -1,7 +1,10 @@
 package com.squishy.ui.library
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.squishy.compression.CompressionJobState
+import com.squishy.compression.CompressionService
 import com.squishy.data.VideoRepository
 import com.squishy.model.VideoItem
 import com.squishy.model.VideoSortOrder
@@ -15,8 +18,12 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class VideoLibraryViewModel(
+    application: Application,
     private val repository: VideoRepository
-) : ViewModel() {
+) : AndroidViewModel(application) {
+
+    val compressionJobState: StateFlow<CompressionJobState?> =
+        CompressionService.currentJobState
 
     sealed interface State {
         data object Loading : State
@@ -65,5 +72,13 @@ class VideoLibraryViewModel(
 
     fun sort(order: VideoSortOrder) {
         _sortOrder.value = order
+    }
+
+    fun compress(video: VideoItem) {
+        CompressionService.startCompressing(getApplication(), video)
+    }
+
+    fun stopCompression() {
+        CompressionService.stopCompressing(getApplication())
     }
 }
