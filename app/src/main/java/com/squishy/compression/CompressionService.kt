@@ -11,13 +11,13 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.MediaCodecInfo
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
 import androidx.core.content.getSystemService
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
@@ -214,16 +214,13 @@ class CompressionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         CrashLogger.log("service", "onStartCommand action=${intent?.action}")
         try {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
+            startForegroundWithMediaProcessingType(
                 buildNotification(
                     title = getString(R.string.notification_working_title),
                     text = getString(R.string.notification_started_text),
                     percent = null,
                     showStop = true
-                ),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+                )
             )
         } catch (e: Throwable) {
             CrashLogger.logException("service", Thread.currentThread().name, e)
@@ -250,6 +247,14 @@ class CompressionService : Service() {
             ACTION_STOP -> stopEverything()
         }
         return START_NOT_STICKY
+    }
+
+    private fun startForegroundWithMediaProcessingType(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun enqueue(videos: List<com.squishy.model.VideoItem>, settings: CompressionSettings) {
