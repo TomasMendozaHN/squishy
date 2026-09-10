@@ -21,8 +21,12 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.getSystemService
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.LanczosResample
 import androidx.media3.transformer.AudioEncoderSettings
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.Effects
+import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.DefaultAudioMixer
 import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.DefaultEncoderFactory
@@ -35,7 +39,6 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.squishy.MainActivity
 import com.squishy.R
 import java.io.File
-import java.io.Serializable
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,11 +50,9 @@ class CompressionService : Service() {
     companion object {
         const val ACTION_START = "com.squishy.action.COMPRESS"
         const val ACTION_STOP = "com.squishy.action.STOP"
-        const val EXTRA_URI = "extra_uri"
-        const val EXTRA_NAME = "extra_name"
-        const val EXTRA_SIZE = "extra_size"
-        const val EXTRA_DURATION = "extra_duration"
         const val EXTRA_QUEUED = "extra_queued"
+        const val EXTRA_HEIGHT = "extra_height"
+        const val EXTRA_BITRATE = "extra_bitrate"
 
         const val CHANNEL_ID = "compression"
         const val NOTIFICATION_ID = 1001
@@ -63,28 +64,23 @@ class CompressionService : Service() {
         private val _queue = MutableStateFlow<List<CompressionJobState>>(emptyList())
         val queue: StateFlow<List<CompressionJobState>> = _queue.asStateFlow()
 
-        private const val TARGET_VIDEO_BITRATE_BPS = 2_500_000
+        private const val DEFAULT_VIDEO_BITRATE_BPS = 2_500_000
         private const val TARGET_AUDIO_BITRATE_BPS = 128_000
         private const val PROGRESS_POLL_MS = 500L
         private const val DONE_NOTIFICATION_MS = 5_000L
         private const val STOP_NOTIFICATION_MS = 2_000L
 
-        fun startCompressing(context: Context, video: com.squishy.model.VideoItem) {
-            val intent = Intent(context, CompressionService::class.java).apply {
-                action = ACTION_START
-                putExtra(EXTRA_URI, video.uri)
-                putExtra(EXTRA_NAME, video.displayName)
-                putExtra(EXTRA_SIZE, video.sizeBytes)
-                putExtra(EXTRA_DURATION, video.durationMs)
-            }
-            context.startForegroundService(intent)
-        }
-
-        fun enqueueCompressing(context: Context, videos: List<com.squishy.model.VideoItem>) {
+        fun enqueueCompressing(
+            context: Context,
+            videos: List<com.squishy.model.VideoItem>,
+            settings: CompressionSettings = CompressionSettings.DEFAULT
+        ) {
             if (videos.isEmpty()) return
             val intent = Intent(context, CompressionService::class.java).apply {
                 action = ACTION_START
-                putExtra(EXTRA_QUEUED, videos as Serializable)
+                putExtra(EXTRA_QUEUED, ArrayList(videos))
+                putExtra(EXTRA_HEIGHT, settings.targetHeight)
+                putExtra(EXTRA_BITRATE, settings.targetVideoBitrateBps)
             }
             context.startForegroundService(intent)
         }
@@ -225,24 +221,20 @@ class CompressionService : Service() {
         )
         when (intent?.action) {
             ACTION_START -> {
+                val height = intent.getIntExtra(EXTRA_HEIGHT, CompressionSettings.DEFAULT.targetHeight)
+                val bitrate = intent.getIntExtra(EXTRA_BITRATE, 0)
+                val settings = CompressionSettings(
+                    targetHeight = height,
+                    targetVideoBitrateBps = bitrate.takeIf { it > 0 }
+                        ?: CompressionSettings.bitrateForHeight(height)
+                )
                 @Suppress("UNCHECKED_CAST")
                 val queued = intent.getSerializableExtra(EXTRA_QUEUED) as? ArrayList<com.squishy.model.VideoItem>
                 if (queued != null && queued.isNotEmpty()) {
-                    enqueue(queued)
+                    enqueue(queued, settings)
                 } else {
-                    val uri = intent.getStringExtra(EXTRA_URI).orEmpty()
-                    if (uri.isEmpty()) {
-                        stopSelf()
-                        return START_NOT_STICKY
-                    }
-                    val job = CompressionJob(
-                        id = Uri.parse(uri).lastPathSegment?.toLongOrNull() ?: 0L,
-                        inputUri = uri,
-                        displayName = intent.getStringExtra(EXTRA_NAME).orEmpty(),
-                        sizeBytes = intent.getLongExtra(EXTRA_SIZE, 0L),
-                        durationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
-                    )
-                    enqueueJobs(listOf(job))
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
             }
             ACTION_STOP -> stopEverything()
@@ -250,16 +242,8 @@ class CompressionService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun enqueue(videos: List<com.squishy.model.VideoItem>) {
-        val jobs = videos.map { video ->
-            CompressionJob(
-                id = Uri.parse(video.uri).lastPathSegment?.toLongOrNull() ?: 0L,
-                inputUri = video.uri,
-                displayName = video.displayName,
-                sizeBytes = video.sizeBytes,
-                durationMs = video.durationMs
-            )
-        }
+    private fun enqueue(videos: List<com.squishy.model.VideoItem>, settings: CompressionSettings) {
+        val jobs = videos.map { video -> CompressionJob.from(video, settings) }
         enqueueJobs(jobs)
     }
 
@@ -303,7 +287,7 @@ class CompressionService : Service() {
             status = CompressionStatus.RUNNING,
             progress = 0
         )
-        val transformerInstance = buildTransformer()
+        val transformerInstance = buildTransformer(job)
         transformer = transformerInstance
         transformerInstance.addListener(transformerListener)
         postNotification(
@@ -313,7 +297,7 @@ class CompressionService : Service() {
             showStop = true
         )
         try {
-            transformerInstance.start(MediaItem.fromUri(Uri.parse(job.inputUri)), path)
+            transformerInstance.start(buildComposition(job), path)
             startProgressPoll()
         } catch (e: Throwable) {
             transformer = null
@@ -333,9 +317,18 @@ class CompressionService : Service() {
         }
     }
 
-    private fun buildTransformer(): Transformer {
+    private fun buildComposition(job: CompressionJob): Composition {
+        val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(job.inputUri))).apply {
+            if (job.settings.targetHeight > 0) {
+                setEffects(Effects(emptyList(), listOf(LanczosResample.scaleToFit(10000, job.settings.targetHeight))))
+            }
+        }.build()
+        return Composition.Builder(EditedMediaItemSequence(editedItem)).build()
+    }
+
+    private fun buildTransformer(job: CompressionJob): Transformer {
         val videoSettings = VideoEncoderSettings.Builder()
-            .setBitrate(TARGET_VIDEO_BITRATE_BPS)
+            .setBitrate(job.settings.targetVideoBitrateBps)
             .setBitrateMode(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             .build()
         val audioSettings = AudioEncoderSettings.Builder()

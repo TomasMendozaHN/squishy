@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.squishy.compression.CompressionJobState
+import com.squishy.compression.CompressionSettings
 import com.squishy.compression.CompressionService
 import com.squishy.data.VideoRepository
 import com.squishy.model.VideoItem
@@ -76,13 +77,13 @@ class VideoLibraryViewModel(
         _sortOrder.value = order
     }
 
-    fun compress(video: VideoItem) {
-        compress(listOf(video))
+    fun compress(video: VideoItem, settings: CompressionSettings = CompressionSettings.DEFAULT) {
+        compress(listOf(video), settings)
     }
 
-    fun compress(videos: List<VideoItem>) {
+    fun compress(videos: List<VideoItem>, settings: CompressionSettings = CompressionSettings.DEFAULT) {
         if (videos.isEmpty()) return
-        CompressionService.enqueueCompressing(getApplication(), videos)
+        CompressionService.enqueueCompressing(getApplication(), videos, settings)
     }
 
     fun stopCompression() {
