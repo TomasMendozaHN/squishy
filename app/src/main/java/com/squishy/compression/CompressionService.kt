@@ -36,6 +36,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.squishy.CrashLogger
 import com.squishy.MainActivity
 import com.squishy.R
 import java.io.File
@@ -76,6 +77,7 @@ class CompressionService : Service() {
             settings: CompressionSettings = CompressionSettings.DEFAULT
         ) {
             if (videos.isEmpty()) return
+            CrashLogger.log("service", "enqueueCompressing ${videos.size} video(s) settings=$settings")
             val intent = Intent(context, CompressionService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_QUEUED, ArrayList(videos))
@@ -114,6 +116,7 @@ class CompressionService : Service() {
         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
             val job = activeJob ?: return
             val path = outputPath
+            CrashLogger.log("service", "job completed: '${job.displayName}' -> $path")
             cancelProgressPoll()
             _currentJobState.value = CompressionJobState(
                 job = job,
@@ -139,6 +142,7 @@ class CompressionService : Service() {
             exportException: ExportException
         ) {
             val job = activeJob ?: return
+            CrashLogger.logException("service", "transformer", exportException)
             cancelProgressPoll()
             _currentJobState.value = CompressionJobState(
                 job = job,
@@ -208,17 +212,23 @@ class CompressionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(
-                title = getString(R.string.notification_working_title),
-                text = getString(R.string.notification_started_text),
-                percent = null,
-                showStop = true
-            ),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
-        )
+        CrashLogger.log("service", "onStartCommand action=${intent?.action}")
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(
+                    title = getString(R.string.notification_working_title),
+                    text = getString(R.string.notification_started_text),
+                    percent = null,
+                    showStop = true
+                ),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+            )
+        } catch (e: Throwable) {
+            CrashLogger.logException("service", Thread.currentThread().name, e)
+            throw e
+        }
         when (intent?.action) {
             ACTION_START -> {
                 val height = intent.getIntExtra(EXTRA_HEIGHT, CompressionSettings.DEFAULT.targetHeight)
@@ -249,6 +259,7 @@ class CompressionService : Service() {
 
     private fun enqueueJobs(jobs: List<CompressionJob>) {
         if (jobs.isEmpty()) return
+        CrashLogger.log("service", "enqueueJobs count=${jobs.size} names=${jobs.map { it.displayName }}")
         val busy = activeJob != null
         if (busy) {
             queuedJobs.addAll(jobs)
@@ -280,7 +291,9 @@ class CompressionService : Service() {
 
     private fun startJob(job: CompressionJob) {
         activeJob = job
+        CrashLogger.log("service", "startJob '${job.displayName}' uri=${job.inputUri} settings=${job.settings}")
         val path = outputFilePath(job)
+        CrashLogger.log("service", "output path=$path")
         outputPath = path
         _currentJobState.value = CompressionJobState(
             job = job,
@@ -298,8 +311,10 @@ class CompressionService : Service() {
         )
         try {
             transformerInstance.start(buildComposition(job), path)
+            CrashLogger.log("service", "transformer.start returned OK")
             startProgressPoll()
         } catch (e: Throwable) {
+            CrashLogger.logException("service", Thread.currentThread().name, e)
             transformer = null
             cancelProgressPoll()
             _currentJobState.value = CompressionJobState(

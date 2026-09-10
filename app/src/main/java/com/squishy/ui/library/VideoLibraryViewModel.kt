@@ -3,6 +3,7 @@ package com.squishy.ui.library
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.squishy.CrashLogger
 import com.squishy.compression.CompressionJobState
 import com.squishy.compression.CompressionSettings
 import com.squishy.compression.CompressionService
@@ -88,5 +89,11 @@ class VideoLibraryViewModel(
 
     fun stopCompression() {
         CompressionService.stopCompressing(getApplication())
+    }
+
+    fun viewLogs(): String = CrashLogger.dump()
+
+    fun clearLogs() {
+        CrashLogger.clear()
     }
 }
