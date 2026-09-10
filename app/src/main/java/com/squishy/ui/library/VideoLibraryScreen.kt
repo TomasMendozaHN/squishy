@@ -21,6 +21,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,11 +49,14 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.PermissionChecker
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.squishy.compression.CompressionSettings
 import com.squishy.data.VideoRepository
 import com.squishy.model.VideoFormat
 import com.squishy.model.VideoItem
 import com.squishy.model.VideoSortOrder
 import android.Manifest
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -66,11 +70,14 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
     val videos by viewModel.sortedVideos.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
     var pendingCompress by remember { mutableStateOf<List<VideoItem>?>(null) }
+    var pendingSettings by remember { mutableStateOf(CompressionSettings.DEFAULT) }
+    var showOptionsSheet by remember { mutableStateOf(false) }
+    var busyDialogVisible by remember { mutableStateOf(false) }
     val notificationLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
         ) {
-            pendingCompress?.let { viewModel.compress(it) }
+            pendingCompress?.let { viewModel.compress(it, pendingSettings) }
             pendingCompress = null
         }
 
@@ -98,22 +105,38 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
         selected[video.id] = video
     }
 
+    fun beginCompression(videos: List<VideoItem>) {
+        if (videos.isEmpty()) return
+        if (viewModel.compressionJobState.value != null || viewModel.queue.value.isNotEmpty()) {
+            busyDialogVisible = true
+            return
+        }
+        pendingCompress = videos
+        showOptionsSheet = true
+    }
+
+    fun startCompression(settings: CompressionSettings) {
+        showOptionsSheet = false
+        pendingCompress?.let { toCompress ->
+            pendingSettings = settings
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PermissionChecker.PERMISSION_GRANTED
+            ) {
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                viewModel.compress(toCompress, settings)
+            }
+        }
+    }
+
     fun compressSelected() {
         val toCompress = selected.values.toList()
         selected.clear()
         selectionMode = false
-        if (toCompress.isEmpty()) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) != PermissionChecker.PERMISSION_GRANTED
-        ) {
-            pendingCompress = toCompress
-            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            viewModel.compress(toCompress)
-        }
+        beginCompression(toCompress)
     }
 
     Scaffold(
@@ -203,19 +226,7 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                                     onLongPress = { enterSelectionMode(video) },
                                     onCompress = {
                                         if (!isCompressing) {
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                                ContextCompat.checkSelfPermission(
-                                                    context,
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                ) != PermissionChecker.PERMISSION_GRANTED
-                                            ) {
-                                                pendingCompress = listOf(video)
-                                                notificationLauncher.launch(
-                                                    Manifest.permission.POST_NOTIFICATIONS
-                                                )
-                                            } else {
-                                                viewModel.compress(video)
-                                            }
+                                            beginCompression(listOf(video))
                                         }
                                     }
                                 )
@@ -224,6 +235,18 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                     }
                 }
             }
+        }
+
+        if (showOptionsSheet) {
+            CompressOptionsDialog(
+                videos = pendingCompress.orEmpty(),
+                onConfirm = { startCompression(it) },
+                onDismiss = { showOptionsSheet = false }
+            )
+        }
+
+        if (busyDialogVisible) {
+            BusyDialog(onDismiss = { busyDialogVisible = false })
         }
     }
 }
@@ -245,6 +268,94 @@ private fun SortMenu(current: VideoSortOrder, onSelect: (VideoSortOrder) -> Unit
                         onSelect(order)
                     }
                 )
+            }
+        }
+    }
+}
+
+private data class QualityOption(val title: String, val settings: CompressionSettings)
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompressOptionsDialog(
+    videos: List<VideoItem>,
+    onConfirm: (CompressionSettings) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selected by remember { mutableStateOf(CompressionSettings.DEFAULT) }
+    val qualities = remember {
+        listOf(
+            QualityOption("Original (smaller file)", CompressionSettings.ORIGINAL),
+            QualityOption("480p (smallest)", CompressionSettings.QUALITY_480P),
+            QualityOption("720p (balanced)", CompressionSettings.QUALITY_720P),
+            QualityOption("1080p (best)", CompressionSettings.QUALITY_1080P)
+        )
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Compress ${if (videos.size == 1) "video" else "${videos.size} videos"}",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                qualities.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .combinedClickable(onClick = { selected = option.settings }),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selected == option.settings,
+                            onClick = { selected = option.settings }
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = option.title,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                text = "Est. ${estimateOutputText(videos, option.settings)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(onClick = { onConfirm(selected) }) { Text("Compress") }
+                }
+            }
+        }
+    }
+}
+
+private fun estimateOutputText(videos: List<VideoItem>, settings: CompressionSettings): String {
+    val totalBits = videos.sumOf { video ->
+        (settings.targetVideoBitrateBps + 128_000) * (video.durationMs / 1000L).coerceAtLeast(1L)
+    }
+    return "${VideoFormat.formatSize(totalBits / 8L)} total"
+}
+
+@Composable
+private fun BusyDialog(onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Compression already in progress",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "Stop the current compression before starting a new one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("OK") }
+                }
             }
         }
     }
