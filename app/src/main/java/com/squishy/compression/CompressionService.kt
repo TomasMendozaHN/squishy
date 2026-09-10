@@ -35,6 +35,7 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.squishy.MainActivity
 import com.squishy.R
 import java.io.File
+import java.io.Serializable
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +51,7 @@ class CompressionService : Service() {
         const val EXTRA_NAME = "extra_name"
         const val EXTRA_SIZE = "extra_size"
         const val EXTRA_DURATION = "extra_duration"
+        const val EXTRA_QUEUED = "extra_queued"
 
         const val CHANNEL_ID = "compression"
         const val NOTIFICATION_ID = 1001
@@ -57,6 +59,9 @@ class CompressionService : Service() {
         private val _currentJobState = MutableStateFlow<CompressionJobState?>(null)
         val currentJobState: StateFlow<CompressionJobState?> =
             _currentJobState.asStateFlow()
+
+        private val _queue = MutableStateFlow<List<CompressionJobState>>(emptyList())
+        val queue: StateFlow<List<CompressionJobState>> = _queue.asStateFlow()
 
         private const val TARGET_VIDEO_BITRATE_BPS = 2_500_000
         private const val TARGET_AUDIO_BITRATE_BPS = 128_000
@@ -75,6 +80,15 @@ class CompressionService : Service() {
             context.startForegroundService(intent)
         }
 
+        fun enqueueCompressing(context: Context, videos: List<com.squishy.model.VideoItem>) {
+            if (videos.isEmpty()) return
+            val intent = Intent(context, CompressionService::class.java).apply {
+                action = ACTION_START
+                putExtra(EXTRA_QUEUED, videos as Serializable)
+            }
+            context.startForegroundService(intent)
+        }
+
         fun stopCompressing(context: Context) {
             context.startForegroundService(
                 Intent(context, CompressionService::class.java).setAction(ACTION_STOP)
@@ -87,6 +101,13 @@ class CompressionService : Service() {
     private var transformer: Transformer? = null
     private var activeJob: CompressionJob? = null
     private var outputPath: String? = null
+    private val queuedJobs = mutableListOf<CompressionJob>()
+
+    private fun publishQueue() {
+        _queue.value = queuedJobs.map {
+            CompressionJobState(job = it, status = CompressionStatus.QUEUED)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -113,7 +134,7 @@ class CompressionService : Service() {
             if (path != null) {
                 worker.execute { registerInMediaStore(File(path), job.displayName) }
             }
-            mainHandler.postDelayed({ stopSelf() }, DONE_NOTIFICATION_MS)
+            advanceQueue()
         }
 
         override fun onError(
@@ -134,7 +155,27 @@ class CompressionService : Service() {
                 percent = null,
                 showStop = false
             )
-            mainHandler.postDelayed({ stopSelf() }, DONE_NOTIFICATION_MS)
+            advanceQueue()
+        }
+    }
+
+    private fun queueLabel(): String {
+        return if (queuedJobs.isEmpty()) {
+            ""
+        } else {
+            getString(R.string.notification_queue_remaining, queuedJobs.size)
+        }
+    }
+
+    private fun advanceQueue() {
+        publishQueue()
+        if (queuedJobs.isEmpty()) {
+            mainHandler.postDelayed({
+                _currentJobState.value = null
+                stopSelf()
+            }, DONE_NOTIFICATION_MS)
+        } else {
+            mainHandler.postDelayed({ startNextInQueue() }, 500L)
         }
     }
 
@@ -154,7 +195,10 @@ class CompressionService : Service() {
                     )
                     postNotification(
                         title = getString(R.string.notification_working_title),
-                        text = getString(R.string.notification_compressing_text, job.displayName),
+                        text = getString(
+                            R.string.notification_compressing_text,
+                            job.displayName
+                        ) + queueLabel(),
                         percent = percent,
                         showStop = true
                     )
@@ -181,23 +225,62 @@ class CompressionService : Service() {
         )
         when (intent?.action) {
             ACTION_START -> {
-                val uri = intent.getStringExtra(EXTRA_URI).orEmpty()
-                if (uri.isEmpty()) {
-                    stopSelf()
-                    return START_NOT_STICKY
+                @Suppress("UNCHECKED_CAST")
+                val queued = intent.getSerializableExtra(EXTRA_QUEUED) as? ArrayList<com.squishy.model.VideoItem>
+                if (queued != null && queued.isNotEmpty()) {
+                    enqueue(queued)
+                } else {
+                    val uri = intent.getStringExtra(EXTRA_URI).orEmpty()
+                    if (uri.isEmpty()) {
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+                    val job = CompressionJob(
+                        id = Uri.parse(uri).lastPathSegment?.toLongOrNull() ?: 0L,
+                        inputUri = uri,
+                        displayName = intent.getStringExtra(EXTRA_NAME).orEmpty(),
+                        sizeBytes = intent.getLongExtra(EXTRA_SIZE, 0L),
+                        durationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
+                    )
+                    enqueueJobs(listOf(job))
                 }
-                val job = CompressionJob(
-                    id = Uri.parse(uri).lastPathSegment?.toLongOrNull() ?: 0L,
-                    inputUri = uri,
-                    displayName = intent.getStringExtra(EXTRA_NAME).orEmpty(),
-                    sizeBytes = intent.getLongExtra(EXTRA_SIZE, 0L),
-                    durationMs = intent.getLongExtra(EXTRA_DURATION, 0L)
-                )
-                startJob(job)
             }
             ACTION_STOP -> stopEverything()
         }
         return START_NOT_STICKY
+    }
+
+    private fun enqueue(videos: List<com.squishy.model.VideoItem>) {
+        val jobs = videos.map { video ->
+            CompressionJob(
+                id = Uri.parse(video.uri).lastPathSegment?.toLongOrNull() ?: 0L,
+                inputUri = video.uri,
+                displayName = video.displayName,
+                sizeBytes = video.sizeBytes,
+                durationMs = video.durationMs
+            )
+        }
+        enqueueJobs(jobs)
+    }
+
+    private fun enqueueJobs(jobs: List<CompressionJob>) {
+        if (jobs.isEmpty()) return
+        val busy = activeJob != null
+        if (busy) {
+            queuedJobs.addAll(jobs)
+        } else {
+            jobs.firstOrNull()?.let { startJob(it) }
+            queuedJobs.addAll(jobs.drop(1))
+        }
+        publishQueue()
+    }
+
+    private fun startNextInQueue() {
+        val job = queuedJobs.removeFirstOrNull()
+        if (job == null) {
+            return
+        }
+        startJob(job)
     }
 
     override fun onDestroy() {
@@ -246,7 +329,7 @@ class CompressionService : Service() {
                 percent = null,
                 showStop = false
             )
-            mainHandler.postDelayed({ stopSelf() }, DONE_NOTIFICATION_MS)
+            advanceQueue()
         }
     }
 
@@ -286,13 +369,20 @@ class CompressionService : Service() {
         activeJob?.let {
             _currentJobState.value = CompressionJobState(it, CompressionStatus.CANCELLED)
         }
+        activeJob = null
+        outputPath = null
+        queuedJobs.clear()
+        publishQueue()
         postNotification(
             title = getString(R.string.notification_working_title),
             text = getString(R.string.notification_stopped_text),
             percent = null,
             showStop = false
         )
-        mainHandler.postDelayed({ stopSelf() }, STOP_NOTIFICATION_MS)
+        mainHandler.postDelayed({
+            _currentJobState.value = null
+            stopSelf()
+        }, STOP_NOTIFICATION_MS)
     }
 
     private fun registerInMediaStore(output: File, displayName: String) {

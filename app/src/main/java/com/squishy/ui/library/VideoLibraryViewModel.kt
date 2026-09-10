@@ -25,6 +25,8 @@ class VideoLibraryViewModel(
     val compressionJobState: StateFlow<CompressionJobState?> =
         CompressionService.currentJobState
 
+    val queue: StateFlow<List<CompressionJobState>> = CompressionService.queue
+
     sealed interface State {
         data object Loading : State
         data object PermissionNeeded : State
@@ -75,7 +77,12 @@ class VideoLibraryViewModel(
     }
 
     fun compress(video: VideoItem) {
-        CompressionService.startCompressing(getApplication(), video)
+        compress(listOf(video))
+    }
+
+    fun compress(videos: List<VideoItem>) {
+        if (videos.isEmpty()) return
+        CompressionService.enqueueCompressing(getApplication(), videos)
     }
 
     fun stopCompression() {

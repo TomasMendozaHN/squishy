@@ -4,6 +4,11 @@
     <string name="notification_working_title">Compressing video</string>
     <string name="notification_started_text">Starting compression…</string>
     <string name="notification_compressing_text">Compressing %1$s</string>
+    <string name="notification_queue_remaining"> — %1$d more in queue</string>
+    <string name="select">Select</string>
+    <string name="selected_count">%1$d selected</string>
+    <string name="compress_selected">Compress selected</string>
+    <string name="clear_selection">Clear</string>
     <string name="notification_stopped_text">Compression stopped</string>
     <string name="notification_done_title">Compression finished</string>
     <string name="notification_done_text">%1$s was compressed</string>

@@ -1,5 +1,7 @@
 package com.squishy.ui.library
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,17 +14,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.Icons
@@ -32,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,7 +54,7 @@ import com.squishy.model.VideoItem
 import com.squishy.model.VideoSortOrder
 import android.Manifest
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
     val context = LocalContext.current
@@ -61,13 +65,13 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
     val state by viewModel.state.collectAsState()
     val videos by viewModel.sortedVideos.collectAsState()
     val sortOrder by viewModel.sortOrder.collectAsState()
-    var pendingVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var pendingCompress by remember { mutableStateOf<List<VideoItem>?>(null) }
     val notificationLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
         ) {
-            pendingVideo?.let { viewModel.compress(it) }
-            pendingVideo = null
+            pendingCompress?.let { viewModel.compress(it) }
+            pendingCompress = null
         }
 
     LaunchedEffect(state) {
@@ -81,12 +85,61 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
         }
     }
 
+    var selectionMode by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateMapOf<Long, VideoItem>() }
+
+    fun toggleSelection(video: VideoItem) {
+        if (selected.containsKey(video.id)) selected.remove(video.id) else selected[video.id] = video
+        if (selected.isEmpty()) selectionMode = false
+    }
+
+    fun enterSelectionMode(video: VideoItem) {
+        selectionMode = true
+        selected[video.id] = video
+    }
+
+    fun compressSelected() {
+        val toCompress = selected.values.toList()
+        selected.clear()
+        selectionMode = false
+        if (toCompress.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PermissionChecker.PERMISSION_GRANTED
+        ) {
+            pendingCompress = toCompress
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            viewModel.compress(toCompress)
+        }
+    }
+
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Videos") },
-                actions = { SortMenu(current = sortOrder, onSelect = viewModel::sort) }
-            )
+            if (selectionMode) {
+                TopAppBar(
+                    title = { Text("${selected.size} selected") },
+                    navigationIcon = {
+                        TextButton(onClick = {
+                            selected.clear()
+                            selectionMode = false
+                        }) { Text("Clear") }
+                    },
+                    actions = {
+                        Button(
+                            onClick = { compressSelected() },
+                            enabled = selected.isNotEmpty()
+                        ) { Text("Compress") }
+                    }
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Videos") },
+                    actions = { SortMenu(current = sortOrder, onSelect = viewModel::sort) }
+                )
+            }
         }
     ) { padding ->
         when (state) {
@@ -109,6 +162,7 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
             is VideoLibraryViewModel.State.Ready -> {
                 val jobState by viewModel.compressionJobState.collectAsState()
                 val activeJob = jobState
+                val queue by viewModel.queue.collectAsState()
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -117,6 +171,7 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                     if (activeJob != null) {
                         CompressionStatusCard(
                             jobState = activeJob,
+                            queueCount = queue.size,
                             onStop = { viewModel.stopCompression() }
                         )
                     }
@@ -142,6 +197,10 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                                 VideoRow(
                                     video = video,
                                     isCompressing = isCompressing,
+                                    selectionMode = selectionMode,
+                                    selected = selected.containsKey(video.id),
+                                    onToggleSelected = { toggleSelection(video) },
+                                    onLongPress = { enterSelectionMode(video) },
                                     onCompress = {
                                         if (!isCompressing) {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -150,7 +209,7 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                                                     Manifest.permission.POST_NOTIFICATIONS
                                                 ) != PermissionChecker.PERMISSION_GRANTED
                                             ) {
-                                                pendingVideo = video
+                                                pendingCompress = listOf(video)
                                                 notificationLauncher.launch(
                                                     Manifest.permission.POST_NOTIFICATIONS
                                                 )
@@ -194,6 +253,7 @@ private fun SortMenu(current: VideoSortOrder, onSelect: (VideoSortOrder) -> Unit
 @Composable
 private fun CompressionStatusCard(
     jobState: com.squishy.compression.CompressionJobState,
+    queueCount: Int,
     onStop: () -> Unit
 ) {
     Card(
@@ -215,7 +275,11 @@ private fun CompressionStatusCard(
                 when (jobState.status) {
                     com.squishy.compression.CompressionStatus.RUNNING -> {
                         Text(
-                            text = "${jobState.progress}%",
+                            text = if (queueCount > 0) {
+                                "${jobState.progress}% · $queueCount in queue"
+                            } else {
+                                "${jobState.progress}%"
+                            },
                             style = MaterialTheme.typography.titleSmall
                         )
                     }
@@ -255,18 +319,37 @@ private fun CompressionStatusCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoRow(
     video: VideoItem,
     isCompressing: Boolean,
-    onCompress: () -> Unit
+    onCompress: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelected: () -> Unit = {},
+    onLongPress: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .combinedClickable(
+                onClick = {
+                    if (selectionMode) onToggleSelected() else onCompress()
+                },
+                onLongClick = {
+                    if (!selectionMode) onLongPress()
+                }
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (selectionMode) {
+            Checkbox(
+                checked = selected,
+                onCheckedChange = { onToggleSelected() }
+            )
+        }
         Icon(
             imageVector = Icons.Filled.PlayArrow,
             contentDescription = null,
