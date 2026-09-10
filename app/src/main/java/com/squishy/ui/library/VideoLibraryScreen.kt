@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +59,9 @@ import com.squishy.model.VideoFormat
 import com.squishy.model.VideoItem
 import com.squishy.model.VideoSortOrder
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
@@ -73,6 +80,7 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
     var pendingSettings by remember { mutableStateOf(CompressionSettings.DEFAULT) }
     var showOptionsSheet by remember { mutableStateOf(false) }
     var busyDialogVisible by remember { mutableStateOf(false) }
+    var logsDialogVisible by remember { mutableStateOf(false) }
     val notificationLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -160,7 +168,10 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
             } else {
                 TopAppBar(
                     title = { Text("Videos") },
-                    actions = { SortMenu(current = sortOrder, onSelect = viewModel::sort) }
+                    actions = {
+                        SortMenu(current = sortOrder, onSelect = viewModel::sort)
+                        TextButton(onClick = { logsDialogVisible = true }) { Text("Log") }
+                    }
                 )
             }
         }
@@ -247,6 +258,13 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
 
         if (busyDialogVisible) {
             BusyDialog(onDismiss = { busyDialogVisible = false })
+        }
+
+        if (logsDialogVisible) {
+            LogsDialog(
+                viewModel = viewModel,
+                onDismiss = { logsDialogVisible = false }
+            )
         }
     }
 }
@@ -355,6 +373,58 @@ private fun BusyDialog(onDismiss: () -> Unit) {
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("OK") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LogsDialog(
+    viewModel: VideoLibraryViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var logText by remember { mutableStateOf(viewModel.viewLogs()) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(16.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Logs",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = logText.ifEmpty { "No logs yet." },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { logText = viewModel.viewLogs() }) { Text("Refresh") }
+                    TextButton(
+                        onClick = {
+                            val clipboard =
+                                context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(
+                                ClipData.newPlainText("squishy log", logText)
+                            )
+                            onDismiss()
+                        }
+                    ) { Text("Copy") }
+                    TextButton(onClick = onDismiss) { Text("Close") }
                 }
             }
         }
