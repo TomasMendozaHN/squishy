@@ -8,5 +8,6 @@ data class VideoItem(
     val sizeBytes: Long,
     val dateModified: Long,
     val durationMs: Long,
-    val uri: String
+    val uri: String,
+    val folder: String = ""
 ) : Serializable

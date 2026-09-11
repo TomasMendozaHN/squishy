@@ -39,11 +39,17 @@ import androidx.media3.transformer.VideoEncoderSettings
 import com.squishy.CrashLogger
 import com.squishy.MainActivity
 import com.squishy.R
+import com.squishy.history.CompressionHistoryStore
+import com.squishy.history.HistoryEntry
 import java.io.File
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
 class CompressionService : Service() {
@@ -54,9 +60,12 @@ class CompressionService : Service() {
         const val EXTRA_QUEUED = "extra_queued"
         const val EXTRA_HEIGHT = "extra_height"
         const val EXTRA_BITRATE = "extra_bitrate"
+        const val EXTRA_DELETE = "extra_delete_original"
 
         const val CHANNEL_ID = "compression"
         const val NOTIFICATION_ID = 1001
+
+        private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         private val _currentJobState = MutableStateFlow<CompressionJobState?>(null)
         val currentJobState: StateFlow<CompressionJobState?> =
@@ -74,15 +83,20 @@ class CompressionService : Service() {
         fun enqueueCompressing(
             context: Context,
             videos: List<com.squishy.model.VideoItem>,
-            settings: CompressionSettings = CompressionSettings.DEFAULT
+            settings: CompressionSettings = CompressionSettings.DEFAULT,
+            deleteOriginal: Boolean = false
         ) {
             if (videos.isEmpty()) return
-            CrashLogger.log("service", "enqueueCompressing ${videos.size} video(s) settings=$settings")
+            CrashLogger.log(
+                "service",
+                "enqueueCompressing ${videos.size} video(s) settings=$settings deleteOriginal=$deleteOriginal"
+            )
             val intent = Intent(context, CompressionService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_QUEUED, ArrayList(videos))
                 putExtra(EXTRA_HEIGHT, settings.targetHeight)
                 putExtra(EXTRA_BITRATE, settings.targetVideoBitrateBps)
+                putExtra(EXTRA_DELETE, deleteOriginal)
             }
             context.startForegroundService(intent)
         }
@@ -99,6 +113,7 @@ class CompressionService : Service() {
     private var transformer: Transformer? = null
     private var activeJob: CompressionJob? = null
     private var outputPath: String? = null
+    private var jobStartedAt = 0L
     private val queuedJobs = mutableListOf<CompressionJob>()
 
     private fun publishQueue() {
@@ -130,8 +145,31 @@ class CompressionService : Service() {
                 percent = 100,
                 showStop = false
             )
+            val tookMs = System.currentTimeMillis() - jobStartedAt
+            val context = this@CompressionService
             if (path != null) {
-                worker.execute { registerInMediaStore(File(path), job.displayName) }
+                worker.execute {
+                    registerInMediaStore(File(path), job.displayName)
+                    if (job.deleteOriginal) {
+                        deleteOriginalFromMediaStore(job)
+                        CrashLogger.log("service", "deleted original for '${job.displayName}'")
+                    }
+                    serviceScope.launch {
+                        CompressionHistoryStore.append(
+                            context,
+                            HistoryEntry(job.displayName, CompressionHistoryStore.STATUS_COMPLETED,
+                                System.currentTimeMillis(), tookMs)
+                        )
+                    }
+                }
+            } else {
+                serviceScope.launch {
+                    CompressionHistoryStore.append(
+                        context,
+                        HistoryEntry(job.displayName, CompressionHistoryStore.STATUS_COMPLETED,
+                            System.currentTimeMillis(), tookMs)
+                    )
+                }
             }
             advanceQueue()
         }
@@ -155,6 +193,15 @@ class CompressionService : Service() {
                 percent = null,
                 showStop = false
             )
+            val tookMs = System.currentTimeMillis() - jobStartedAt
+            val context = this@CompressionService
+            serviceScope.launch {
+                CompressionHistoryStore.append(
+                    context,
+                    HistoryEntry(job.displayName, CompressionHistoryStore.STATUS_FAILED,
+                        System.currentTimeMillis(), tookMs, exportException.getErrorCodeName())
+                )
+            }
             advanceQueue()
         }
     }
@@ -237,8 +284,9 @@ class CompressionService : Service() {
                 )
                 @Suppress("UNCHECKED_CAST")
                 val queued = intent.getSerializableExtra(EXTRA_QUEUED) as? ArrayList<com.squishy.model.VideoItem>
+                val deleteOriginal = intent.getBooleanExtra(EXTRA_DELETE, false)
                 if (queued != null && queued.isNotEmpty()) {
-                    enqueue(queued, settings)
+                    enqueue(queued, settings, deleteOriginal)
                 } else {
                     stopSelf()
                     return START_NOT_STICKY
@@ -257,8 +305,12 @@ class CompressionService : Service() {
         }
     }
 
-    private fun enqueue(videos: List<com.squishy.model.VideoItem>, settings: CompressionSettings) {
-        val jobs = videos.map { video -> CompressionJob.from(video, settings) }
+    private fun enqueue(
+        videos: List<com.squishy.model.VideoItem>,
+        settings: CompressionSettings,
+        deleteOriginal: Boolean = false
+    ) {
+        val jobs = videos.map { video -> CompressionJob.from(video, settings, deleteOriginal) }
         enqueueJobs(jobs)
     }
 
@@ -296,6 +348,7 @@ class CompressionService : Service() {
 
     private fun startJob(job: CompressionJob) {
         activeJob = job
+        jobStartedAt = System.currentTimeMillis()
         CrashLogger.log("service", "startJob '${job.displayName}' uri=${job.inputUri} settings=${job.settings}")
         val path = outputFilePath(job)
         CrashLogger.log("service", "output path=$path")
@@ -333,7 +386,25 @@ class CompressionService : Service() {
                 percent = null,
                 showStop = false
             )
+            val context = this@CompressionService
+            serviceScope.launch {
+                CompressionHistoryStore.append(
+                    context,
+                    HistoryEntry(job.displayName, CompressionHistoryStore.STATUS_FAILED,
+                        System.currentTimeMillis(), System.currentTimeMillis() - jobStartedAt,
+                        e.message ?: "compression failed")
+                )
+            }
             advanceQueue()
+        }
+    }
+
+    private fun deleteOriginalFromMediaStore(job: CompressionJob) {
+        try {
+            val uri = Uri.parse(job.inputUri)
+            contentResolver.delete(uri, null, null)
+        } catch (e: Throwable) {
+            CrashLogger.logException("service", "deleteOriginal", e)
         }
     }
 
@@ -379,8 +450,18 @@ class CompressionService : Service() {
         } catch (_: Throwable) {
         }
         transformer = null
-        activeJob?.let {
+        val cancelledJob = activeJob
+        cancelledJob?.let {
             _currentJobState.value = CompressionJobState(it, CompressionStatus.CANCELLED)
+            val context = this@CompressionService
+            val tookMs = System.currentTimeMillis() - jobStartedAt
+            serviceScope.launch {
+                CompressionHistoryStore.append(
+                    context,
+                    HistoryEntry(it.displayName, CompressionHistoryStore.STATUS_CANCELLED,
+                        System.currentTimeMillis(), tookMs)
+                )
+            }
         }
         activeJob = null
         outputPath = null
