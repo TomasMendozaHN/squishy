@@ -8,14 +8,18 @@ import com.squishy.compression.CompressionJobState
 import com.squishy.compression.CompressionSettings
 import com.squishy.compression.CompressionService
 import com.squishy.data.VideoRepository
+import com.squishy.history.CompressionHistoryStore
+import com.squishy.history.HistoryEntry
 import com.squishy.model.VideoItem
 import com.squishy.model.VideoSortOrder
+import com.squishy.model.VideoViewMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -44,17 +48,43 @@ class VideoLibraryViewModel(
     private val _state = MutableStateFlow<State>(State.Loading)
     val state: StateFlow<State> = _state.asStateFlow()
 
-    val sortedVideos: StateFlow<List<VideoItem>> =
-        combine(_rawVideos, _sortOrder) { items, order ->
-            items.sortedWith(order.comparator())
+    private val _selectedFolder = MutableStateFlow<String?>(null)
+    val selectedFolder: StateFlow<String?> = _selectedFolder.asStateFlow()
+
+    val folders: StateFlow<List<String>> =
+        _rawVideos
+            .map { items ->
+                items.map { it.folder }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
+    private val _viewMode = MutableStateFlow(VideoViewMode.LIST)
+    val viewMode: StateFlow<VideoViewMode> = _viewMode.asStateFlow()
+
+    val visibleVideos: StateFlow<List<VideoItem>> =
+        combine(_rawVideos, _sortOrder, _selectedFolder) { items, order, folder ->
+            val filtered = if (folder == null) items
+            else items.filter { it.folder == folder }
+            filtered.sortedWith(order.comparator())
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()
         )
 
+    private val _history = MutableStateFlow<List<HistoryEntry>>(emptyList())
+    val history: StateFlow<List<HistoryEntry>> = _history.asStateFlow()
+
     init {
         refresh()
+        loadHistory()
     }
 
     fun refresh() {
@@ -78,13 +108,50 @@ class VideoLibraryViewModel(
         _sortOrder.value = order
     }
 
-    fun compress(video: VideoItem, settings: CompressionSettings = CompressionSettings.DEFAULT) {
-        compress(listOf(video), settings)
+    fun setFolder(folder: String?) {
+        _selectedFolder.value = folder
     }
 
-    fun compress(videos: List<VideoItem>, settings: CompressionSettings = CompressionSettings.DEFAULT) {
+    fun setViewMode(mode: VideoViewMode) {
+        _viewMode.value = mode
+    }
+
+    fun toggleViewMode() {
+        _viewMode.value = if (_viewMode.value == VideoViewMode.LIST) {
+            VideoViewMode.GRID
+        } else {
+            VideoViewMode.LIST
+        }
+    }
+
+    fun loadHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _history.value = CompressionHistoryStore.load(getApplication())
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            CompressionHistoryStore.clear(getApplication())
+            _history.value = emptyList()
+        }
+    }
+
+    fun compress(
+        video: VideoItem,
+        settings: CompressionSettings = CompressionSettings.DEFAULT,
+        deleteOriginal: Boolean = false
+    ) {
+        compress(listOf(video), settings, deleteOriginal)
+    }
+
+    fun compress(
+        videos: List<VideoItem>,
+        settings: CompressionSettings = CompressionSettings.DEFAULT,
+        deleteOriginal: Boolean = false
+    ) {
         if (videos.isEmpty()) return
-        CompressionService.enqueueCompressing(getApplication(), videos, settings)
+        CompressionService.enqueueCompressing(getApplication(), videos, settings, deleteOriginal)
     }
 
     fun stopCompression() {

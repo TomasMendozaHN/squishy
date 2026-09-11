@@ -8,17 +8,23 @@ data class CompressionJob(
     val displayName: String,
     val sizeBytes: Long,
     val durationMs: Long,
-    val settings: CompressionSettings = CompressionSettings.DEFAULT
+    val settings: CompressionSettings = CompressionSettings.DEFAULT,
+    val deleteOriginal: Boolean = false
 ) {
     companion object {
-        fun from(video: VideoItem, settings: CompressionSettings = CompressionSettings.DEFAULT): CompressionJob =
+        fun from(
+            video: VideoItem,
+            settings: CompressionSettings = CompressionSettings.DEFAULT,
+            deleteOriginal: Boolean = false
+        ): CompressionJob =
             CompressionJob(
                 id = video.id,
                 inputUri = video.uri,
                 displayName = video.displayName,
                 sizeBytes = video.sizeBytes,
                 durationMs = video.durationMs,
-                settings = settings
+                settings = settings,
+                deleteOriginal = deleteOriginal
             )
     }
 }
