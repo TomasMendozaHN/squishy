@@ -85,14 +85,24 @@ class VideoLibraryViewModel(
     init {
         refresh()
         loadHistory()
+        viewModelScope.launch {
+            var lastTerminal: CompressionJobState? = null
+            CompressionService.currentJobState.collect { state ->
+                if (state != null && state.isTerminal && state != lastTerminal) {
+                    lastTerminal = state
+                    refresh()
+                    loadHistory()
+                }
+            }
+        }
     }
 
-    fun refresh() {
+    fun refresh(silent: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
-            _state.value = State.Loading
+            if (!silent) _state.value = State.Loading
             val videos = repository.loadVideos()
             _rawVideos.value = videos
-            _state.value = State.Ready(videos)
+            if (!silent) _state.value = State.Ready(videos)
         }
     }
 
