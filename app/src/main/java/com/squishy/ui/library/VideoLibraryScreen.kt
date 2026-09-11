@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -202,6 +203,9 @@ fun VideoLibraryScreen(viewModel: VideoLibraryViewModel? = null) {
                 TopAppBar(
                     title = { Text("Videos") },
                     actions = {
+                        TextButton(onClick = { viewModel.refresh() }) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
+                        }
                         FolderMenu(
                             folders = folders,
                             current = selectedFolder,
