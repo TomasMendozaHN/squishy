@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Videos Squishy can hand to other apps (player, WhatsApp, Gmail). -->
+<paths>
+    <external-path name="storage" path="." />
+    <root-path name="root" path="storage/" />
+</paths>

@@ -126,7 +126,7 @@ class AppSettings extends ChangeNotifier {
   VideoCodec get codec => _enum('codec', VideoCodec.values, VideoCodec.hevc);
   set codec(VideoCodec v) => _setEnum('codec', v);
 
-  int get parallel => _prefs.getInt('parallel') ?? 2;
+  int get parallel => _prefs.getInt('parallel') ?? 1;
   set parallel(int v) {
     _prefs.setInt('parallel', v.clamp(1, 3));
     notifyListeners();
@@ -162,6 +162,13 @@ class AppSettings extends ChangeNotifier {
   String? get lastFolder => _prefs.getString('lastFolder');
   set lastFolder(String? v) {
     if (v != null) _prefs.setString('lastFolder', v);
+  }
+
+  // NAS: output quality per library folder (e.g. MOVIES 1080p, TV SHOWS 720p).
+  int? nasQuality(String serverId, String folder) => _prefs.getInt('nasQ:$serverId:$folder');
+  void setNasQuality(String serverId, String folder, int height) {
+    _prefs.setInt('nasQ:$serverId:$folder', height);
+    notifyListeners();
   }
 
   bool get onboarded => _prefs.getBool('onboarded') ?? false;

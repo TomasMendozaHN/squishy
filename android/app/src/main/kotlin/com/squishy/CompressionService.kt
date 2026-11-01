@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
@@ -33,6 +34,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.squishy.nas.NasRunner
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
@@ -55,6 +57,20 @@ class CompressionService : Service() {
         fun start(context: Context, action: String = ACTION_PUMP) {
             context.startForegroundService(Intent(context, CompressionService::class.java).setAction(action))
         }
+
+        /** A running job with no progress for this long is considered stuck. */
+        private const val STALL_MS = 10 * 60_000L
+
+        /** Resource-contention failures that usually succeed when the job runs alone. */
+        private val RETRYABLE = setOf(
+            ExportException.ERROR_CODE_MUXING_TIMEOUT,
+            ExportException.ERROR_CODE_MUXING_FAILED,
+            ExportException.ERROR_CODE_ENCODER_INIT_FAILED,
+            ExportException.ERROR_CODE_ENCODING_FAILED,
+            ExportException.ERROR_CODE_DECODER_INIT_FAILED,
+            ExportException.ERROR_CODE_DECODING_FAILED,
+            ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED,
+        )
 
         /** Live transformers, so the activity can cancel a single job. */
         val active = mutableMapOf<String, Transformer>()
@@ -81,6 +97,7 @@ class CompressionService : Service() {
         super.onCreate()
         instance = this
         JobManager.init(this)
+        NasRunner.init(this)
         createChannels()
         goForeground()
         wakeLock = getSystemService(PowerManager::class.java)
@@ -114,16 +131,23 @@ class CompressionService : Service() {
     /** Starts queued jobs until the parallel limit is reached; stops when idle. */
     fun pump() {
         while (active.size < JobManager.parallel) {
+            // The NAS run's encode step shares the same hardware encoder.
+            if (NasRunner.encoding) break
+            // A job retrying on its own gets the hardware encoder to itself.
+            if (active.keys.any { JobManager.jobs[it]?.solo == true }) break
             val job = JobManager.nextQueued() ?: break
+            if (job.solo && active.isNotEmpty()) break
             startJob(job)
         }
-        if (active.isEmpty() && !JobManager.hasWork()) finishSession()
+        NasRunner.kick()
+        if (active.isEmpty() && !JobManager.hasWork() && !NasRunner.active) finishSession()
         JobManager.changed()
     }
 
     private fun startJob(job: Job) {
         job.status = JobStatus.running
         job.startedAt = System.currentTimeMillis()
+        job.lastProgressAt = job.startedAt
         job.progress = 0.0
         try {
             val input = File(job.input)
@@ -149,12 +173,26 @@ class CompressionService : Service() {
             )
             .setEnableFallback(true)
             .build()
-        val mime = if (job.mime == MimeTypes.VIDEO_H265 && !MediaTools.hasHevcEncoder()) MimeTypes.VIDEO_H264 else job.mime
+        // The retry uses H.264: some phones' H.265 encoders stall where H.264 does not.
+        val mime = if (job.mime == MimeTypes.VIDEO_H265 && (!MediaTools.hasHevcEncoder() || job.attempts > 0)) {
+            MimeTypes.VIDEO_H264
+        } else job.mime
+        job.encoderLabel = if (mime == MimeTypes.VIDEO_H265) "H.265" else "H.264"
         return Transformer.Builder(this)
             .setVideoMimeType(mime)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
             .setLooper(Looper.getMainLooper())
+            // Media3 aborts if the muxer gets no samples for a while (ERROR_CODE_MUXING_TIMEOUT).
+            // First attempt: generous limits. Retry: Media3's timer is off and our own stall
+            // detector (pollProgress) only gives up when progress hasn't moved for STALL_MS.
+            .setMaxDelayBetweenMuxerSamplesMs(
+                when {
+                    job.attempts > 0 -> C.TIME_UNSET
+                    job.solo || JobManager.parallel == 1 -> 60_000L
+                    else -> 180_000L
+                }
+            )
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     active.remove(job.id)
@@ -165,7 +203,11 @@ class CompressionService : Service() {
                 override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                     active.remove(job.id)
                     if (job.status == JobStatus.running) {
-                        fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}")
+                        if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
+                            retrySolo(job)
+                        } else {
+                            fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}${retryNote(job)}${details(job)}")
+                        }
                     }
                     pump()
                 }
@@ -243,6 +285,23 @@ class CompressionService : Service() {
         JobManager.finish(job)
     }
 
+    private fun retryNote(job: Job) =
+        if (job.attempts > 0) " (also failed when retried on its own with ${job.encoderLabel})" else ""
+
+    /** Source format + encoder, so a failure report says what kind of video broke. */
+    private fun details(job: Job) = " [${MediaTools.describe(job.input)} → ${job.width}×${job.height} ${job.encoderLabel}]"
+
+    /** Puts a job back at the front of the queue to run alone, once. */
+    private fun retrySolo(job: Job) {
+        File(job.tempPath).delete()
+        job.attempts++
+        job.solo = true
+        job.status = JobStatus.queued
+        job.progress = 0.0
+        JobManager.saveQueue()
+        JobManager.changed()
+    }
+
     private fun fail(job: Job, reason: String) {
         job.status = JobStatus.failed
         job.error = reason
@@ -277,13 +336,32 @@ class CompressionService : Service() {
     }
 
     private fun pollProgress() {
+        NasRunner.pollEncodeProgress()
+        if (NasRunner.active) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
+        }
         if (active.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val stalled = mutableListOf<Job>()
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
             if (transformer.getProgress(progressHolder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-                job.progress = progressHolder.progress / 100.0
+                val p = progressHolder.progress / 100.0
+                if (p > job.progress || job.lastProgressAt == 0L) job.lastProgressAt = now
+                job.progress = p
+            }
+            if (job.lastProgressAt > 0 && now - job.lastProgressAt > STALL_MS) stalled += job
+        }
+        for (job in stalled) {
+            active.remove(job.id)?.cancel()
+            job.lastProgressAt = 0
+            if (job.attempts == 0) {
+                retrySolo(job)
+            } else {
+                fail(job, "Encoder stalled: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             }
         }
+        if (stalled.isNotEmpty()) pump()
         JobManager.changed()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
     }
@@ -317,6 +395,19 @@ class CompressionService : Service() {
         val overall = if (sessionJobs.isEmpty()) 0.0 else sessionJobs.sumOf {
             if (it.status == JobStatus.running) it.progress else if (it.status == JobStatus.queued) 0.0 else 1.0
         } / sessionJobs.size
+        NasRunner.snapshot()?.takeIf { NasRunner.active && running.isEmpty() }?.let { nas ->
+            val total = (nas["total"] as Int).coerceAtLeast(1)
+            return Notification.Builder(this, CHANNEL_WORK)
+                .setSmallIcon(R.drawable.ic_stat_squishy)
+                .setContentTitle("NAS: ${nas["phase"]} · ${nas["current"]}")
+                .setContentText("${nas["index"]} of ${nas["total"]} · saved ${MediaTools.formatBytes(nas["saved"] as Long)}")
+                .setProgress(1000, ((nas["overall"] as Double) * 1000).toInt(), nas["status"] == "scanning" || total == 0)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                .setContentIntent(openAppIntent())
+                .build()
+        }
         val title = when {
             running.isEmpty() -> "Getting ready…"
             running.size == 1 -> "Squishing ${running[0].name}"

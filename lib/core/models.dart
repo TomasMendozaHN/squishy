@@ -194,7 +194,7 @@ class LogEntry {
   final bool originalDeleted;
 
   String get name => input.split('/').last;
-  int get savedBytes => success && kind == 'compress' ? inputSize - outputSize : 0;
+  int get savedBytes => success && kind != 'cut' ? inputSize - outputSize : 0;
   double get reduction => inputSize > 0 && success ? 1 - outputSize / inputSize : 0;
   DateTime get finished => DateTime.fromMillisecondsSinceEpoch(finishedAt);
   Duration get took => Duration(milliseconds: math.max(0, finishedAt - startedAt));

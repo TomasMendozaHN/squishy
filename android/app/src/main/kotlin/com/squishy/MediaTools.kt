@@ -1,11 +1,14 @@
 package com.squishy
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaCodecList
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.ThumbnailUtils
 import android.net.Uri
@@ -14,6 +17,7 @@ import android.os.PowerManager
 import android.os.storage.StorageManager
 import android.provider.Settings
 import android.util.Size
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -88,6 +92,45 @@ object MediaTools {
         }
     }
 
+    /** e.g. "3840×2160 HEVC HDR10 60fps": the video track, for failure reports. */
+    fun describe(path: String): String {
+        val ex = MediaExtractor()
+        return try {
+            ex.setDataSource(path)
+            val format = (0 until ex.trackCount).map { ex.getTrackFormat(it) }
+                .firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
+                ?: return "no video track"
+            fun int(key: String) = if (format.containsKey(key)) format.getInteger(key) else null
+            val mime = format.getString(MediaFormat.KEY_MIME).orEmpty()
+            val codec = when {
+                mime.contains("hevc") -> "HEVC"
+                mime.contains("avc") -> "H.264"
+                mime.contains("av01") -> "AV1"
+                mime.contains("vp9") -> "VP9"
+                else -> mime.substringAfter('/')
+            }
+            val hdr = when (int(MediaFormat.KEY_COLOR_TRANSFER)) {
+                MediaFormat.COLOR_TRANSFER_ST2084 -> " HDR10"
+                MediaFormat.COLOR_TRANSFER_HLG -> " HLG"
+                else -> ""
+            }
+            val fps = if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE) }
+                    .getOrElse { format.getFloat(MediaFormat.KEY_FRAME_RATE).toInt() }
+            } else null
+            "${int(MediaFormat.KEY_WIDTH)}×${int(MediaFormat.KEY_HEIGHT)} $codec$hdr${fps?.let { " ${it}fps" }.orEmpty()}"
+        } catch (t: Throwable) {
+            "unknown format"
+        } finally {
+            ex.release()
+        }
+    }
+
+    fun shareText(context: Context, text: String) = tryStart(
+        context,
+        listOf(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Send details")),
+    )
+
     fun storageRoots(context: Context): List<Map<String, String>> {
         val sm = context.getSystemService(StorageManager::class.java)
         return sm.storageVolumes.mapNotNull { v ->
@@ -157,6 +200,47 @@ object MediaTools {
     )
 
     fun openAppSettings(context: Context) = tryStart(context, listOf(appDetails(context)))
+
+    private fun contentUri(context: Context, path: String): Uri =
+        FileProvider.getUriForFile(context, "${context.packageName}.files", File(path))
+
+    /** Opens the video in the user's default player. */
+    fun openVideo(context: Context, path: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(contentUri(context, path), "video/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return tryStart(context, listOf(intent))
+    }
+
+    /**
+     * Shares a video. [target] is "whatsapp" (contact picker), "gmail" (new email; Gmail
+     * itself swaps attachments over 25 MB for a Drive link) or anything else for the
+     * system share sheet. Falls back to the share sheet if the app isn't installed.
+     */
+    fun shareVideo(context: Context, path: String, target: String): Boolean {
+        val uri = contentUri(context, path)
+        fun send() = Intent(Intent.ACTION_SEND)
+            .setType("video/mp4")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .apply { clipData = ClipData.newRawUri(null, uri) }
+        // Apps can register several share targets (Gmail: email + Chat; WhatsApp: chats +
+        // status), so aim at the one we want instead of letting Android ask.
+        fun targeted(pkg: String, hint: String): List<Intent> {
+            val base = send().setPackage(pkg)
+            val match = context.packageManager.queryIntentActivities(base, 0)
+                .firstOrNull { it.activityInfo.name.contains(hint, ignoreCase = true) }
+                ?: return listOf(base)
+            return listOf(send().setClassName(pkg, match.activityInfo.name), base)
+        }
+        val direct = when (target) {
+            "whatsapp" -> targeted("com.whatsapp", "ContactPicker") + targeted("com.whatsapp.w4b", "ContactPicker")
+            "gmail" -> targeted("com.google.android.gm", "Compose")
+            else -> emptyList()
+        }
+        val chooser = Intent.createChooser(send(), null)
+        return tryStart(context, direct + chooser)
+    }
 
     fun formatBytes(bytes: Long): String {
         if (bytes <= 0) return "0 B"

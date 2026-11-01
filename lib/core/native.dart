@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 
 import 'models.dart';
+import 'nas.dart';
 
 class StorageRoot {
   const StorageRoot(this.path, this.label);
@@ -33,9 +34,13 @@ abstract final class SquishyNative {
   static const _channel = MethodChannel('squishy/native');
   static const _jobs = EventChannel('squishy/jobs');
 
-  static Stream<List<JobSnapshot>> jobStream() => _jobs.receiveBroadcastStream().map(
-        (event) => (event as List).map((m) => JobSnapshot.fromMap(m as Map)).toList(),
-      );
+  /// Local jobs plus the NAS run (null when there is none).
+  static Stream<(List<JobSnapshot>, NasRunStatus?)> statusStream() => _jobs.receiveBroadcastStream().map((event) {
+        final m = event as Map;
+        final jobs = (m['jobs'] as List).map((j) => JobSnapshot.fromMap(j as Map)).toList();
+        final nas = m['nas'] == null ? null : NasRunStatus.fromMap(m['nas'] as Map);
+        return (jobs, nas);
+      });
 
   static Future<DeviceInfo> deviceInfo() async {
     final m = (await _channel.invokeMapMethod<String, dynamic>('deviceInfo'))!;
@@ -103,6 +108,16 @@ abstract final class SquishyNative {
       await _channel.invokeMethod<bool>('openAutostart') ?? false;
   static Future<bool> openBatterySaver() async =>
       await _channel.invokeMethod<bool>('openBatterySaver') ?? false;
+  static Future<bool> openVideo(String path) async =>
+      await _channel.invokeMethod<bool>('openVideo', {'path': path}) ?? false;
+
+  /// [target]: 'whatsapp', 'gmail' or 'any' (system share sheet).
+  static Future<bool> shareVideo(String path, String target) async =>
+      await _channel.invokeMethod<bool>('shareVideo', {'path': path, 'target': target}) ?? false;
+
+  static Future<bool> shareText(String text) async =>
+      await _channel.invokeMethod<bool>('shareText', {'text': text}) ?? false;
+
   static Future<bool> openAppSettings() async =>
       await _channel.invokeMethod<bool>('openAppSettings') ?? false;
 }
