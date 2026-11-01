@@ -42,6 +42,11 @@ class Job(
     /** Run with nothing else in parallel (set when retrying). */
     var solo = false
 
+    // Runtime only: stall detection and the encoder actually used.
+    var lastProgressAt = 0L
+    var encoderLabel = ""
+
+
     val isCut get() = kind == "cut"
     val tempPath get() = "$output.squishy-tmp.mp4"
     val name get() = input.substringAfterLast('/')

@@ -115,6 +115,9 @@ abstract final class SquishyNative {
   static Future<bool> shareVideo(String path, String target) async =>
       await _channel.invokeMethod<bool>('shareVideo', {'path': path, 'target': target}) ?? false;
 
+  static Future<bool> shareText(String text) async =>
+      await _channel.invokeMethod<bool>('shareText', {'text': text}) ?? false;
+
   static Future<bool> openAppSettings() async =>
       await _channel.invokeMethod<bool>('openAppSettings') ?? false;
 }

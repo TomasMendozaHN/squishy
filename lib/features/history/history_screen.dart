@@ -2,12 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app/scope.dart';
 import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/nas.dart';
+import '../../core/native.dart';
 import '../../widgets/common.dart';
 import '../../widgets/share_actions.dart';
 import '../../widgets/stats_chart.dart';
@@ -361,6 +363,18 @@ class _LogTile extends StatelessWidget {
     );
   }
 
+  /// A plain-text failure report (app, phone, file, reason) for WhatsApp/email.
+  Future<void> _sendDetails(BuildContext context, List<(String, String)> rows) async {
+    final device = context.scope.device;
+    final version = (await PackageInfo.fromPlatform()).version;
+    final text = [
+      'Squishy $version on ${device.manufacturer} ${device.model} (Android API ${device.sdk})',
+      'File: ${entry.name}',
+      for (final (k, v) in rows) '$k: $v',
+    ].join('\n');
+    await SquishyNative.shareText(text);
+  }
+
   void _details(BuildContext context) {
     final rows = <(String, String)>[
       ('Result', entry.success ? 'Squished' : 'Failed'),
@@ -387,6 +401,14 @@ class _LogTile extends StatelessWidget {
             const SizedBox(height: SquishyTokens.space3),
             if (entry.success && File(entry.output).existsSync()) ...[
               ShareActions(path: entry.output),
+              const SizedBox(height: SquishyTokens.space3),
+            ],
+            if (!entry.success) ...[
+              OutlinedButton.icon(
+                onPressed: () => _sendDetails(context, rows),
+                icon: const Icon(Icons.bug_report_rounded),
+                label: const Text('Send details'),
+              ),
               const SizedBox(height: SquishyTokens.space3),
             ],
             for (final (k, v) in rows)

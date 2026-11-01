@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
@@ -56,6 +57,9 @@ class CompressionService : Service() {
         fun start(context: Context, action: String = ACTION_PUMP) {
             context.startForegroundService(Intent(context, CompressionService::class.java).setAction(action))
         }
+
+        /** A running job with no progress for this long is considered stuck. */
+        private const val STALL_MS = 10 * 60_000L
 
         /** Resource-contention failures that usually succeed when the job runs alone. */
         private val RETRYABLE = setOf(
@@ -143,6 +147,7 @@ class CompressionService : Service() {
     private fun startJob(job: Job) {
         job.status = JobStatus.running
         job.startedAt = System.currentTimeMillis()
+        job.lastProgressAt = job.startedAt
         job.progress = 0.0
         try {
             val input = File(job.input)
@@ -168,17 +173,25 @@ class CompressionService : Service() {
             )
             .setEnableFallback(true)
             .build()
-        val mime = if (job.mime == MimeTypes.VIDEO_H265 && !MediaTools.hasHevcEncoder()) MimeTypes.VIDEO_H264 else job.mime
+        // The retry uses H.264: some phones' H.265 encoders stall where H.264 does not.
+        val mime = if (job.mime == MimeTypes.VIDEO_H265 && (!MediaTools.hasHevcEncoder() || job.attempts > 0)) {
+            MimeTypes.VIDEO_H264
+        } else job.mime
+        job.encoderLabel = if (mime == MimeTypes.VIDEO_H265) "H.265" else "H.264"
         return Transformer.Builder(this)
             .setVideoMimeType(mime)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
             .setLooper(Looper.getMainLooper())
-            // Media3 aborts if the muxer gets no samples for ~10 s. Encoders shared by
-            // parallel jobs (or throttled with the screen off) can legitimately stall
-            // longer, which caused ERROR_CODE_MUXING_TIMEOUT on real phones.
+            // Media3 aborts if the muxer gets no samples for a while (ERROR_CODE_MUXING_TIMEOUT).
+            // First attempt: generous limits. Retry: Media3's timer is off and our own stall
+            // detector (pollProgress) only gives up when progress hasn't moved for STALL_MS.
             .setMaxDelayBetweenMuxerSamplesMs(
-                if (job.solo || JobManager.parallel == 1) 60_000L else 180_000L
+                when {
+                    job.attempts > 0 -> C.TIME_UNSET
+                    job.solo || JobManager.parallel == 1 -> 60_000L
+                    else -> 180_000L
+                }
             )
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
@@ -193,8 +206,7 @@ class CompressionService : Service() {
                         if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
                             retrySolo(job)
                         } else {
-                            val retried = if (job.attempts > 0) " (also failed when retried on its own)" else ""
-                            fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}$retried")
+                            fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}${retryNote(job)}${details(job)}")
                         }
                     }
                     pump()
@@ -273,6 +285,12 @@ class CompressionService : Service() {
         JobManager.finish(job)
     }
 
+    private fun retryNote(job: Job) =
+        if (job.attempts > 0) " (also failed when retried on its own with ${job.encoderLabel})" else ""
+
+    /** Source format + encoder, so a failure report says what kind of video broke. */
+    private fun details(job: Job) = " [${MediaTools.describe(job.input)} → ${job.width}×${job.height} ${job.encoderLabel}]"
+
     /** Puts a job back at the front of the queue to run alone, once. */
     private fun retrySolo(job: Job) {
         File(job.tempPath).delete()
@@ -323,12 +341,27 @@ class CompressionService : Service() {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
         }
         if (active.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val stalled = mutableListOf<Job>()
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
             if (transformer.getProgress(progressHolder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-                job.progress = progressHolder.progress / 100.0
+                val p = progressHolder.progress / 100.0
+                if (p > job.progress || job.lastProgressAt == 0L) job.lastProgressAt = now
+                job.progress = p
+            }
+            if (job.lastProgressAt > 0 && now - job.lastProgressAt > STALL_MS) stalled += job
+        }
+        for (job in stalled) {
+            active.remove(job.id)?.cancel()
+            job.lastProgressAt = 0
+            if (job.attempts == 0) {
+                retrySolo(job)
+            } else {
+                fail(job, "Encoder stalled: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             }
         }
+        if (stalled.isNotEmpty()) pump()
         JobManager.changed()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
     }
