@@ -36,6 +36,12 @@ class Job(
     var outputSize = 0L
     var originalDeleted = false
 
+    /** Times this job was retried after a codec/muxer failure. */
+    var attempts = 0
+
+    /** Run with nothing else in parallel (set when retrying). */
+    var solo = false
+
     val isCut get() = kind == "cut"
     val tempPath get() = "$output.squishy-tmp.mp4"
     val name get() = input.substringAfterLast('/')
@@ -65,6 +71,7 @@ class Job(
         put("deleteOriginal", deleteOriginal); put("inputSize", inputSize)
         put("expectedDurationMs", expectedDurationMs); put("estimatedBytes", estimatedBytes)
         put("qualityLabel", qualityLabel); put("codecLabel", codecLabel)
+        put("attempts", attempts); put("solo", solo)
     }
 
     fun toLogJson(): JSONObject = JSONObject().apply {
@@ -121,7 +128,10 @@ class Job(
                 estimatedBytes = o.optLong("estimatedBytes"),
                 qualityLabel = o.optString("qualityLabel"),
                 codecLabel = o.optString("codecLabel"),
-            )
+            ).apply {
+                attempts = o.optInt("attempts")
+                solo = o.optBoolean("solo")
+            }
         }
     }
 }
@@ -139,7 +149,7 @@ object JobManager {
     private val main = Handler(Looper.getMainLooper())
 
     val jobs = LinkedHashMap<String, Job>()
-    var parallel = 2
+    var parallel = 1
     private val listeners = mutableSetOf<() -> Unit>()
     private var notifyPending = false
     private var loaded = false
@@ -150,7 +160,7 @@ object JobManager {
         queueFile = File(context.filesDir, "queue.json")
         logFile = File(context.filesDir, "log.json")
         val prefs = context.getSharedPreferences("squishy_native", Context.MODE_PRIVATE)
-        parallel = prefs.getInt("parallel", 2)
+        parallel = prefs.getInt("parallel", 1)
         if (queueFile.exists()) {
             runCatching {
                 val arr = JSONArray(queueFile.readText())

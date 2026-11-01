@@ -55,7 +55,7 @@ class SettingsScreen extends StatelessWidget {
             ),
             _Labeled(
               title: 'Videos at the same time',
-              subtitle: '1 = one after another. Phones rarely go faster above 2.',
+              subtitle: '1 = one after another (most reliable). More can be faster but strains the encoder.',
               child: SegmentedButton<int>(
                 segments: const [
                   ButtonSegment(value: 1, label: Text('1')),

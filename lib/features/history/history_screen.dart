@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
@@ -6,6 +8,7 @@ import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../widgets/common.dart';
+import '../../widgets/share_actions.dart';
 import '../../widgets/stats_chart.dart';
 
 enum _Filter { all, squished, failed }
@@ -227,7 +230,8 @@ class _LogTile extends StatelessWidget {
     final t = context.tokens;
     final ok = entry.success;
     return GlassCard(
-      onTap: () => _details(context),
+      // Squished videos play on tap; the info button shows the details.
+      onTap: ok && File(entry.output).existsSync() ? () => playVideo(context, entry.output) : () => _details(context),
       padding: const EdgeInsets.all(SquishyTokens.space3),
       child: Row(
         children: [
@@ -266,6 +270,11 @@ class _LogTile extends StatelessWidget {
           ),
           if (ok && entry.kind == 'compress')
             Pill('−${(entry.reduction * 100).round()}%', color: t.success),
+          IconButton(
+            tooltip: 'Details',
+            icon: const Icon(Icons.info_outline_rounded),
+            onPressed: () => _details(context),
+          ),
         ],
       ),
     );
@@ -294,6 +303,10 @@ class _LogTile extends StatelessWidget {
           children: [
             Text(entry.name, style: context.text.titleLarge),
             const SizedBox(height: SquishyTokens.space3),
+            if (entry.success && File(entry.output).existsSync()) ...[
+              ShareActions(path: entry.output),
+              const SizedBox(height: SquishyTokens.space3),
+            ],
             for (final (k, v) in rows)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: SquishyTokens.space1 + 2),

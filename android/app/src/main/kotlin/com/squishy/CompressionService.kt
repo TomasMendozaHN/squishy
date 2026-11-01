@@ -56,6 +56,17 @@ class CompressionService : Service() {
             context.startForegroundService(Intent(context, CompressionService::class.java).setAction(action))
         }
 
+        /** Resource-contention failures that usually succeed when the job runs alone. */
+        private val RETRYABLE = setOf(
+            ExportException.ERROR_CODE_MUXING_TIMEOUT,
+            ExportException.ERROR_CODE_MUXING_FAILED,
+            ExportException.ERROR_CODE_ENCODER_INIT_FAILED,
+            ExportException.ERROR_CODE_ENCODING_FAILED,
+            ExportException.ERROR_CODE_DECODER_INIT_FAILED,
+            ExportException.ERROR_CODE_DECODING_FAILED,
+            ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED,
+        )
+
         /** Live transformers, so the activity can cancel a single job. */
         val active = mutableMapOf<String, Transformer>()
         var instance: CompressionService? = null
@@ -114,7 +125,10 @@ class CompressionService : Service() {
     /** Starts queued jobs until the parallel limit is reached; stops when idle. */
     fun pump() {
         while (active.size < JobManager.parallel) {
+            // A job retrying on its own gets the hardware encoder to itself.
+            if (active.keys.any { JobManager.jobs[it]?.solo == true }) break
             val job = JobManager.nextQueued() ?: break
+            if (job.solo && active.isNotEmpty()) break
             startJob(job)
         }
         if (active.isEmpty() && !JobManager.hasWork()) finishSession()
@@ -155,6 +169,12 @@ class CompressionService : Service() {
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
             .setLooper(Looper.getMainLooper())
+            // Media3 aborts if the muxer gets no samples for ~10 s. Encoders shared by
+            // parallel jobs (or throttled with the screen off) can legitimately stall
+            // longer, which caused ERROR_CODE_MUXING_TIMEOUT on real phones.
+            .setMaxDelayBetweenMuxerSamplesMs(
+                if (job.solo || JobManager.parallel == 1) 60_000L else 180_000L
+            )
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     active.remove(job.id)
@@ -165,7 +185,12 @@ class CompressionService : Service() {
                 override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                     active.remove(job.id)
                     if (job.status == JobStatus.running) {
-                        fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}")
+                        if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
+                            retrySolo(job)
+                        } else {
+                            val retried = if (job.attempts > 0) " (also failed when retried on its own)" else ""
+                            fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}$retried")
+                        }
                     }
                     pump()
                 }
@@ -241,6 +266,17 @@ class CompressionService : Service() {
         sessionDone++
         if (!job.isCut) sessionSaved += job.inputSize - job.outputSize
         JobManager.finish(job)
+    }
+
+    /** Puts a job back at the front of the queue to run alone, once. */
+    private fun retrySolo(job: Job) {
+        File(job.tempPath).delete()
+        job.attempts++
+        job.solo = true
+        job.status = JobStatus.queued
+        job.progress = 0.0
+        JobManager.saveQueue()
+        JobManager.changed()
     }
 
     private fun fail(job: Job, reason: String) {

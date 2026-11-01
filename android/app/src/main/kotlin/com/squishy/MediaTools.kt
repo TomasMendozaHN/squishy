@@ -1,6 +1,7 @@
 package com.squishy
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -14,6 +15,7 @@ import android.os.PowerManager
 import android.os.storage.StorageManager
 import android.provider.Settings
 import android.util.Size
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -157,6 +159,47 @@ object MediaTools {
     )
 
     fun openAppSettings(context: Context) = tryStart(context, listOf(appDetails(context)))
+
+    private fun contentUri(context: Context, path: String): Uri =
+        FileProvider.getUriForFile(context, "${context.packageName}.files", File(path))
+
+    /** Opens the video in the user's default player. */
+    fun openVideo(context: Context, path: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(contentUri(context, path), "video/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return tryStart(context, listOf(intent))
+    }
+
+    /**
+     * Shares a video. [target] is "whatsapp" (contact picker), "gmail" (new email; Gmail
+     * itself swaps attachments over 25 MB for a Drive link) or anything else for the
+     * system share sheet. Falls back to the share sheet if the app isn't installed.
+     */
+    fun shareVideo(context: Context, path: String, target: String): Boolean {
+        val uri = contentUri(context, path)
+        fun send() = Intent(Intent.ACTION_SEND)
+            .setType("video/mp4")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            .apply { clipData = ClipData.newRawUri(null, uri) }
+        // Apps can register several share targets (Gmail: email + Chat; WhatsApp: chats +
+        // status), so aim at the one we want instead of letting Android ask.
+        fun targeted(pkg: String, hint: String): List<Intent> {
+            val base = send().setPackage(pkg)
+            val match = context.packageManager.queryIntentActivities(base, 0)
+                .firstOrNull { it.activityInfo.name.contains(hint, ignoreCase = true) }
+                ?: return listOf(base)
+            return listOf(send().setClassName(pkg, match.activityInfo.name), base)
+        }
+        val direct = when (target) {
+            "whatsapp" -> targeted("com.whatsapp", "ContactPicker") + targeted("com.whatsapp.w4b", "ContactPicker")
+            "gmail" -> targeted("com.google.android.gm", "Compose")
+            else -> emptyList()
+        }
+        val chooser = Intent.createChooser(send(), null)
+        return tryStart(context, direct + chooser)
+    }
 
     fun formatBytes(bytes: Long): String {
         if (bytes <= 0) return "0 B"

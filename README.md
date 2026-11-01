@@ -39,10 +39,14 @@
 - **Deletes originals for you, safely.** An original is removed only after the new file
   has been checked: it plays, has the right length, and is actually smaller. If anything
   looks wrong, the original stays and the job is logged as failed with the reason.
+- **Play & share instantly.** Tap a finished video to play it, or send it with one tap:
+  **WhatsApp** (opens the contact picker), **Gmail** (new email with the video attached;
+  Gmail turns files over 25 MB into a Drive link) or any other app.
 - **Saves where you want.** By default each video goes into a `compressed` folder next to
   the original. You can also pick (or create) any other folder.
-- **Runs several videos at once.** 1, 2 (default) or 3 videos at the same time, or one
-  after another.
+- **Runs several videos at once, or one after another.** 1 (default, the most reliable),
+  2 or 3 videos at the same time. If one fails because the phone's encoder was overloaded,
+  it retries automatically on its own.
 - **Cuts & joins.** Mark as many segments of a video as you like, reorder them, preview them,
   and Squishy joins them into one clean file. The original is kept.
 - **Browses your whole phone.** A real folder browser with shortcuts to Camera, Screen
@@ -99,9 +103,10 @@ You can come back to these any time in **Settings → Background reliability**.
 2. Tap **Squish**, choose the quality (the expected size is shown), and tap **Start squishing**.
 3. Watch the **Squish** tab fill up, or just leave. A notification shows progress, and you
    get another one when the batch is done.
-4. To keep only parts of a video, tap it and choose **Cut segments**. Drag the slider,
+4. Tap a finished video to play it, or use the **WhatsApp** / **Gmail** buttons under it to send it.
+5. To keep only parts of a video, tap it and choose **Cut segments**. Drag the slider,
    tap **Add segment**, repeat, then **Cut & join**.
-5. **History** shows what worked, what failed and why. **Style** changes the look.
+6. **History** shows what worked, what failed and why. **Style** changes the look.
 
 ### Good to know
 
