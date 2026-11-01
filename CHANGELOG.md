@@ -3,6 +3,33 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.1.0] - 2026-11-01
+
+### Added
+- **NAS / Plex mode.** Add an SMB share (address, share, login; the password is stored
+  encrypted with the Android Keystore), pick a folder, and Squishy compresses every video in
+  it and in all subfolders **in place, under the exact same file name**.
+  - Only the video track is re-encoded (hardware encoder). **Every audio track, subtitle track,
+    chapter, attachment and language/default/forced tag is copied untouched** (FFmpeg stream
+    copy). MKV stays MKV, MP4 stays MP4. DTS/TrueHD/Atmos audio is kept as-is.
+  - **Quality per library**: top-level folders (e.g. MOVIES, TV SHOWS) each get their own
+    quality. Default is Movies 1080p and TV 720p.
+  - **Safe swap**: upload as a hidden temp file, move the original aside, rename the new file
+    into place, then delete the original. Interrupted swaps are repaired on the next run, and
+    the original is restored if the new file never made it.
+  - **Verification before replacing**: same length, same number of audio and subtitle tracks,
+    the planned resolution (no silent encoder fallbacks) and a real size reduction.
+  - **Stats stored on the NAS** (`.squishy/ledger.json`): total saved per NAS and files, GB saved,
+    skipped and failed per library. Shown on the NAS screen and in History → Stats.
+  - Skips files it already squished and files that are already near the target bitrate.
+  - Runs in the foreground service (same "never killed" protection), keeps Wi-Fi awake,
+    retries a file up to 3 times on network errors, can be stopped and **resumed**, and
+    resumes by itself after a crash.
+- NAS button in Files, a NAS card on the Squish screen, NAS entries in History.
+
+### Changed
+- APK is larger (about 53 MB for arm64) because it now includes FFmpeg and an SMB client.
+
 ## [2.0.1] - 2026-11-01
 
 ### Added

@@ -46,6 +46,29 @@ The v1 code is still in git history (tags `v1.0.0` to `v1.2.0`).
   (FlexColorScheme 9 and google_fonts 9 use the new `material_ui` package and
   don't mix with Flutter's built-in material yet, so they are pinned to 8.x and 6.x.)
 
+## NAS mode (v2.1)
+
+- **Pipeline per file** (`nas/NasRunner.kt`): probe (FFprobe) → Media3 encodes the video track
+  only (`setRemoveAudio`) → FFmpeg stream-copies every other stream from the original
+  (`-map 1 -map -1:v -map -1:d -c copy`, global and chapter metadata from the original) → verify
+  → upload hidden temp → original → `.name.squishy-orig` → temp → name → delete backup.
+- **Reading from SMB**: `SmbHttpBridge` serves files on `127.0.0.1` with Range support, so both
+  Media3 and FFmpeg can seek without copying the source to the phone. Cleartext is allowed only
+  for 127.0.0.1 (`network_security_config.xml`).
+- **SMB client**: smbj with BouncyCastle (NTLM needs MD4). Dead sessions are dropped and retried
+  once (`Smb.fresh`). All "not found" statuses are treated alike (servers differ). Small files
+  are read with explicit offset reads, because some servers mis-answer smbj's read-to-end helper.
+- **Never pass a per-stream `-map_metadata`** to FFmpeg: it disables the automatic copying of
+  every stream's language and title tags.
+- **The ledger lives on the NAS** (`.squishy/ledger.json`): done files (path → in/out size),
+  per-library totals, and per-file issues (latest reason), so stats survive reinstalls and
+  re-runs don't double-count.
+- **FFmpegKit**: the original was retired in 2025. `dev.ffmpegkit-maintained:ffmpeg-kit-min`
+  (LGPL, arm64 + x86_64) is used. It also ships unused translation helper classes that make
+  network calls only if called; Squishy never calls them.
+- Release builds use R8. Keep rules in `android/app/proguard-rules.pro` (FFmpegKit JNI
+  callbacks, smbj's event bus).
+
 ## Delivery
 
 - Each change goes on a branch, then a PR, then green CI (`.github/workflows/ci.yml`:
