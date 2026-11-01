@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<lint>
-    <!-- media3-transformer and related media3 APIs are @UnstableApi; opt in project-wide. -->
-    <issue id="UnsafeOptInUsageError">
-        <option name="opt-in" value="androidx.media3.common.util.UnstableApi" />
-    </issue>
-</lint>
