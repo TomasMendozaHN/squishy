@@ -126,7 +126,7 @@ class AppSettings extends ChangeNotifier {
   VideoCodec get codec => _enum('codec', VideoCodec.values, VideoCodec.hevc);
   set codec(VideoCodec v) => _setEnum('codec', v);
 
-  int get parallel => _prefs.getInt('parallel') ?? 2;
+  int get parallel => _prefs.getInt('parallel') ?? 1;
   set parallel(int v) {
     _prefs.setInt('parallel', v.clamp(1, 3));
     notifyListeners();
