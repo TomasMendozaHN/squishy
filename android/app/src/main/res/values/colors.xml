@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="squishy_night">#0B0820</color>
+    <color name="squishy_night_2">#0B1F3A</color>
+    <color name="squishy_blob_top">#7DF9FF</color>
+    <color name="squishy_blob_bottom">#8B5CF6</color>
+    <color name="squishy_face">#1B1035</color>
+</resources>

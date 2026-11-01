@@ -10,3 +10,18 @@
 .cxx
 local.properties
 .kotlin
+
+# Release signing (kept outside the repo)
+/android/key.properties
+*.jks
+*.keystore
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+*.g.dart.tmp
+android/app/.cxx/
