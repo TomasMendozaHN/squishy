@@ -164,6 +164,13 @@ class AppSettings extends ChangeNotifier {
     if (v != null) _prefs.setString('lastFolder', v);
   }
 
+  // NAS: output quality per library folder (e.g. MOVIES 1080p, TV SHOWS 720p).
+  int? nasQuality(String serverId, String folder) => _prefs.getInt('nasQ:$serverId:$folder');
+  void setNasQuality(String serverId, String folder, int height) {
+    _prefs.setInt('nasQ:$serverId:$folder', height);
+    notifyListeners();
+  }
+
   bool get onboarded => _prefs.getBool('onboarded') ?? false;
   set onboarded(bool v) => _setBool('onboarded', v);
 }

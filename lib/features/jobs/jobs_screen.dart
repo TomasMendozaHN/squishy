@@ -12,6 +12,7 @@ import '../../widgets/common.dart';
 import '../../widgets/progress_visuals.dart';
 import '../../widgets/share_actions.dart';
 import '../../widgets/squishy_logo.dart';
+import '../nas/nas_run_card.dart';
 import '../shell/home_shell.dart';
 
 class JobsScreen extends StatelessWidget {
@@ -24,7 +25,7 @@ class JobsScreen extends StatelessWidget {
       listenable: Listenable.merge([scope.jobs, scope.settings]),
       builder: (context, _) {
         final jobs = scope.jobs;
-        if (jobs.jobs.isEmpty) {
+        if (jobs.jobs.isEmpty && jobs.nas == null) {
           return EmptyState(
             icon: const SquishyLogo(size: 120),
             title: 'Nothing squishing',
@@ -42,17 +43,21 @@ class JobsScreen extends StatelessWidget {
           final visualSize = math.min(wide ? constraints.maxHeight * 0.7 : constraints.maxWidth * 0.72, 320.0);
           final hero = _Hero(size: visualSize);
           final list = _JobList(jobs: jobs.jobs);
+          final nasCard = jobs.nas == null
+              ? const SliverToBoxAdapter(child: SizedBox.shrink())
+              : SliverToBoxAdapter(child: NasRunCard(run: jobs.nas!));
           if (wide) {
             return Row(
               children: [
                 Expanded(child: Center(child: SingleChildScrollView(child: hero))),
-                Expanded(child: CustomScrollView(slivers: [list])),
+                Expanded(child: CustomScrollView(slivers: [nasCard, list])),
               ],
             );
           }
           return CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: hero),
+              nasCard,
               list,
               const SliverToBoxAdapter(child: SizedBox(height: SquishyTokens.space6)),
             ],
@@ -78,17 +83,28 @@ class _Hero extends StatelessWidget {
     final total = jobs.jobs.length;
     final busy = jobs.isBusy;
     final eta = jobs.eta;
-    final caption = busy ? '${done + failed} of $total done' : (failed > 0 ? '$done done · $failed failed' : 'All done!');
+    // With no local videos, the big visual follows the NAS run.
+    final nas = jobs.nas;
+    final nasOnly = total == 0 && nas != null;
+    final caption = nasOnly
+        ? (nas.scanning ? 'Finding videos… ${nas.found}' : '${nas.index} of ${nas.total} files')
+        : busy
+            ? '${done + failed} of $total done'
+            : (failed > 0 ? '$done done · $failed failed' : 'All done!');
     return Padding(
       padding: const EdgeInsets.all(SquishyTokens.space4),
       child: Column(
         children: [
           Text(
-            busy ? 'Squishing…' : 'Finished',
+            nasOnly
+                ? (busy ? 'Squishing your NAS…' : (nas.status == 'done' ? 'Finished' : 'Paused'))
+                : (busy ? 'Squishing…' : 'Finished'),
             style: context.text.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
           Text(
-            busy
+            nasOnly
+                ? '${nas.serverName} · ${formatBytes(nas.saved)} saved'
+                : busy
                 ? [
                     '${jobs.runningCount} running',
                     if (eta != null) formatEta(eta),
@@ -111,7 +127,7 @@ class _Hero extends StatelessWidget {
               child: ProgressVisual(
                 key: ValueKey(settings.progressStyle),
                 style: settings.progressStyle,
-                progress: jobs.overallProgress,
+                progress: nasOnly ? nas.overall : jobs.overallProgress,
                 size: size,
                 caption: caption,
               ),
@@ -129,7 +145,9 @@ class _Hero extends StatelessWidget {
                 selected: settings.keepScreenOn,
                 onSelected: (v) => settings.keepScreenOn = v,
               ),
-              if (busy)
+              if (nasOnly)
+                const SizedBox.shrink()
+              else if (busy)
                 ActionChip(
                   avatar: Icon(Icons.stop_circle_rounded, size: 18, color: context.tokens.danger),
                   label: const Text('Cancel all'),

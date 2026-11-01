@@ -12,6 +12,7 @@ import '../../widgets/share_actions.dart';
 import '../../widgets/squishy_logo.dart';
 import '../compress/compress_sheet.dart';
 import '../editor/segment_editor_screen.dart';
+import '../nas/nas_screen.dart';
 import 'browser_controller.dart';
 import 'video_tile.dart';
 
@@ -329,6 +330,11 @@ class _AppBar extends StatelessWidget {
             ],
             onSelected: controller.switchRoot,
           ),
+        IconButton(
+          tooltip: 'Network (NAS)',
+          icon: const Icon(Icons.lan_rounded),
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NasScreen())),
+        ),
         IconButton(
           tooltip: 'Sort',
           icon: const Icon(Icons.swap_vert_rounded),
