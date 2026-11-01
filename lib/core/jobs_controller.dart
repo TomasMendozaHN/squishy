@@ -5,19 +5,32 @@ import 'package:flutter/foundation.dart';
 import 'encoding_plan.dart';
 import 'format.dart';
 import 'models.dart';
+import 'nas.dart';
 import 'native.dart';
 import 'settings.dart';
 
 /// Mirrors the native queue and turns user choices into native job requests.
 class JobsController extends ChangeNotifier {
   JobsController(this.settings) {
-    _sub = SquishyNative.jobStream().listen(_onJobs);
+    _sub = SquishyNative.statusStream().listen((e) {
+      final nasWasActive = nas?.active ?? false;
+      final nasIndex = nas?.index;
+      nas = e.$2;
+      _onJobs(e.$1);
+      // Each finished NAS file lands in the log too.
+      if (nasWasActive && (nas?.index != nasIndex || !(nas?.active ?? false))) {
+        _finishedController.add(null);
+      }
+    });
     settings.addListener(_syncScreen);
   }
 
   final AppSettings settings;
-  late final StreamSubscription<List<JobSnapshot>> _sub;
+  late final StreamSubscription<(List<JobSnapshot>, NasRunStatus?)> _sub;
   List<JobSnapshot> jobs = const [];
+
+  /// The NAS run, if one exists (running, finished or paused).
+  NasRunStatus? nas;
   final _finishedController = StreamController<void>.broadcast();
   int _idCounter = 0;
   DateTime? _sessionStart;
@@ -28,7 +41,7 @@ class JobsController extends ChangeNotifier {
 
   List<JobSnapshot> get active => jobs.where((j) => j.isActive).toList();
   List<JobSnapshot> get finished => jobs.where((j) => !j.isActive).toList();
-  bool get isBusy => jobs.any((j) => j.isActive);
+  bool get isBusy => jobs.any((j) => j.isActive) || (nas?.active ?? false);
   int get runningCount => jobs.where((j) => j.status == JobStatus.running).length;
 
   /// Overall progress across the current batch (finished jobs count as 1).

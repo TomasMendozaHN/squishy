@@ -131,3 +131,10 @@ abstract final class BrandColors {
   static const shine = Color(0xFFFFFFFF);
   static const cheek = Color(0xFFFF8FB1);
 }
+
+/// Third-party brand colors for the share buttons.
+abstract final class ShareColors {
+  static const whatsapp = Color(0xFF25D366);
+  static const gmail = Color(0xFFEA4335);
+  static const onBrand = Color(0xFFFFFFFF);
+}

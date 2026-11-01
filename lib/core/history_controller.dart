@@ -44,7 +44,7 @@ class HistoryController extends ChangeNotifier {
   int get savedBytes => entries.fold(0, (s, e) => s + e.savedBytes);
 
   double get averageReduction {
-    final ok = successes.where((e) => e.kind == 'compress').toList();
+    final ok = successes.where((e) => e.kind != 'cut').toList();
     if (ok.isEmpty) return 0;
     return ok.fold<double>(0, (s, e) => s + e.reduction) / ok.length;
   }
