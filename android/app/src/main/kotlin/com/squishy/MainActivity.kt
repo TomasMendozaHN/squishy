@@ -128,6 +128,10 @@ class MainActivity : FlutterActivity() {
             "openBatterySaver" -> result.success(MediaTools.openBatterySaver(this))
             "openAppSettings" -> result.success(MediaTools.openAppSettings(this))
             "isXiaomi" -> result.success(MediaTools.isXiaomiFamily())
+            "openVideo" -> result.success(MediaTools.openVideo(this, call.argument<String>("path")!!))
+            "shareVideo" -> result.success(
+                MediaTools.shareVideo(this, call.argument<String>("path")!!, call.argument<String>("target") ?: "any")
+            )
             else -> result.notImplemented()
         }
     }

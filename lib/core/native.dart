@@ -103,6 +103,13 @@ abstract final class SquishyNative {
       await _channel.invokeMethod<bool>('openAutostart') ?? false;
   static Future<bool> openBatterySaver() async =>
       await _channel.invokeMethod<bool>('openBatterySaver') ?? false;
+  static Future<bool> openVideo(String path) async =>
+      await _channel.invokeMethod<bool>('openVideo', {'path': path}) ?? false;
+
+  /// [target]: 'whatsapp', 'gmail' or 'any' (system share sheet).
+  static Future<bool> shareVideo(String path, String target) async =>
+      await _channel.invokeMethod<bool>('shareVideo', {'path': path, 'target': target}) ?? false;
+
   static Future<bool> openAppSettings() async =>
       await _channel.invokeMethod<bool>('openAppSettings') ?? false;
 }

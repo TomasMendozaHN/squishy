@@ -10,6 +10,7 @@ import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../../widgets/common.dart';
 import '../../widgets/progress_visuals.dart';
+import '../../widgets/share_actions.dart';
 import '../../widgets/squishy_logo.dart';
 import '../shell/home_shell.dart';
 
@@ -213,7 +214,10 @@ class _JobCard extends StatelessWidget {
       JobStatus.failed || JobStatus.cancelled => job.error ?? 'Failed',
       _ => '${formatBytes(job.inputSize)} → ≈ ${formatBytes(job.estimatedBytes)}',
     };
+    final done = job.status == JobStatus.done;
     return GlassCard(
+      // Finished videos open straight in the system player.
+      onTap: done ? () => playVideo(context, job.output) : null,
       padding: const EdgeInsets.all(SquishyTokens.space3),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -251,6 +255,10 @@ class _JobCard extends StatelessWidget {
                 ),
             ],
           ),
+          if (done) ...[
+            const SizedBox(height: SquishyTokens.space3),
+            ShareActions(path: job.output),
+          ],
           if (job.isActive) ...[
             const SizedBox(height: SquishyTokens.space2),
             _LiquidBar(progress: job.status == JobStatus.queued ? 0 : job.progress),

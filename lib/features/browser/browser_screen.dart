@@ -8,6 +8,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/settings.dart';
 import '../../widgets/common.dart';
+import '../../widgets/share_actions.dart';
 import '../../widgets/squishy_logo.dart';
 import '../compress/compress_sheet.dart';
 import '../editor/segment_editor_screen.dart';
@@ -281,6 +282,8 @@ class _BrowserScreenState extends State<BrowserScreen> with WidgetsBindingObserv
                     icon: const Icon(Icons.check_circle_outline_rounded),
                     label: const Text('Select'),
                   ),
+                  const SizedBox(height: SquishyTokens.space2),
+                  ShareActions(path: v.path),
                 ],
               ),
             ),
