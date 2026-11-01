@@ -233,9 +233,13 @@ object JobManager {
         queueFile.writeText(arr.toString())
     }
 
-    private fun appendLog(job: Job) {
+    private fun appendLog(job: Job) = appendLogJson(job.toLogJson())
+
+    /** Thread-safe: NAS runs log from their worker thread. */
+    @Synchronized
+    fun appendLogJson(entry: JSONObject) {
         val arr = readLogArray()
-        arr.put(job.toLogJson())
+        arr.put(entry)
         val trimmed = if (arr.length() > MAX_LOG) {
             JSONArray().apply { for (i in arr.length() - MAX_LOG until arr.length()) put(arr.get(i)) }
         } else arr

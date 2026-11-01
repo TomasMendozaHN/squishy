@@ -33,6 +33,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.squishy.nas.NasRunner
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
@@ -92,6 +93,7 @@ class CompressionService : Service() {
         super.onCreate()
         instance = this
         JobManager.init(this)
+        NasRunner.init(this)
         createChannels()
         goForeground()
         wakeLock = getSystemService(PowerManager::class.java)
@@ -125,13 +127,16 @@ class CompressionService : Service() {
     /** Starts queued jobs until the parallel limit is reached; stops when idle. */
     fun pump() {
         while (active.size < JobManager.parallel) {
+            // The NAS run's encode step shares the same hardware encoder.
+            if (NasRunner.encoding) break
             // A job retrying on its own gets the hardware encoder to itself.
             if (active.keys.any { JobManager.jobs[it]?.solo == true }) break
             val job = JobManager.nextQueued() ?: break
             if (job.solo && active.isNotEmpty()) break
             startJob(job)
         }
-        if (active.isEmpty() && !JobManager.hasWork()) finishSession()
+        NasRunner.kick()
+        if (active.isEmpty() && !JobManager.hasWork() && !NasRunner.active) finishSession()
         JobManager.changed()
     }
 
@@ -313,6 +318,10 @@ class CompressionService : Service() {
     }
 
     private fun pollProgress() {
+        NasRunner.pollEncodeProgress()
+        if (NasRunner.active) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
+        }
         if (active.isEmpty()) return
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
@@ -353,6 +362,19 @@ class CompressionService : Service() {
         val overall = if (sessionJobs.isEmpty()) 0.0 else sessionJobs.sumOf {
             if (it.status == JobStatus.running) it.progress else if (it.status == JobStatus.queued) 0.0 else 1.0
         } / sessionJobs.size
+        NasRunner.snapshot()?.takeIf { NasRunner.active && running.isEmpty() }?.let { nas ->
+            val total = (nas["total"] as Int).coerceAtLeast(1)
+            return Notification.Builder(this, CHANNEL_WORK)
+                .setSmallIcon(R.drawable.ic_stat_squishy)
+                .setContentTitle("NAS: ${nas["phase"]} · ${nas["current"]}")
+                .setContentText("${nas["index"]} of ${nas["total"]} · saved ${MediaTools.formatBytes(nas["saved"] as Long)}")
+                .setProgress(1000, ((nas["overall"] as Double) * 1000).toInt(), nas["status"] == "scanning" || total == 0)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                .setContentIntent(openAppIntent())
+                .build()
+        }
         val title = when {
             running.isEmpty() -> "Getting ready…"
             running.size == 1 -> "Squishing ${running[0].name}"
