@@ -3,6 +3,25 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.1.1] - 2026-11-01
+
+### Added
+- **NAS: "Pick videos · biggest first".** Scans the folder and **all its subfolders** and lists
+  every video sorted by size, with its library, quality and status (already squished, or
+  skipped/failed before and why). Tick any videos and squish just those, in place.
+- **"Send details"** on failed entries in History: shares a short report (app version, phone,
+  file, reason, video format) by WhatsApp, email, etc.
+
+### Fixed
+- **`ERROR_CODE_MUXING_TIMEOUT` still happening on some phones, even when retried alone.**
+  The automatic retry now:
+  - turns off Media3's fixed muxer timer and uses Squishy's own stall detector instead, which
+    only gives up if progress hasn't moved for 10 minutes (slow but working encodes are no
+    longer killed)
+  - uses H.264 if the first attempt was H.265 (some H.265 encoders stall)
+- Failure reasons now include the source video's format and the encoder used, e.g.
+  `[3840×2160 HEVC HDR10 60fps → 854×480 H.264]`.
+
 ## [2.1.0] - 2026-11-01
 
 ### Added

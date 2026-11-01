@@ -126,6 +126,7 @@ You can come back to these any time in **Settings → Background reliability**.
 <p align="center">
   <img src="docs/screenshots/15_nas_libraries.png" width="230" alt="NAS libraries with stats">
   <img src="docs/screenshots/16_nas_done.png" width="230" alt="Finished NAS run">
+  <img src="docs/screenshots/19_nas_pick.png" width="230" alt="Pick videos, biggest first">
   <img src="docs/screenshots/17_nas_stats.png" width="230" alt="NAS savings in History">
 </p>
 
@@ -136,6 +137,9 @@ You can come back to these any time in **Settings → Background reliability**.
    its own quality: **Movies 1080p and TV 720p by default**, changeable per library.
 3. Tap **Squish everything**, or open a folder and tap **Squish this folder**. Every video in it
    and in all its subfolders is processed, one at a time.
+4. Or tap **Pick videos · biggest first**: Squishy scans the folder and every subfolder and lists
+   all videos sorted by size (with library, quality and whether they were already squished). Tick
+   the ones you want and squish only those.
 
 For each file, Squishy:
 
