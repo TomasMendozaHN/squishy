@@ -42,8 +42,20 @@ android {
         }
     }
 
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+            )
+        }
+    }
+
     buildTypes {
         release {
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (keyProperties.isNotEmpty()) {
                 signingConfigs.getByName("release")
             } else {
@@ -65,6 +77,13 @@ dependencies {
     implementation("androidx.media3:media3-effect:$media3")
     implementation("androidx.media3:media3-common:$media3")
     implementation("androidx.core:core-ktx:1.16.0")
+
+    // NAS: SMB2/3 client (+ BouncyCastle for NTLM's MD4, which Android lacks)
+    implementation("com.hierynomus:smbj:0.15.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    // NAS: stream-copy remux (keeps every audio/subtitle track). LGPL, community-maintained
+    // fork of the retired FFmpegKit. Only FFmpeg/FFprobe classes are used.
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.9")
 }
 
 flutter {
