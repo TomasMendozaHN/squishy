@@ -136,6 +136,7 @@ class MainActivity : FlutterActivity() {
             "openBatterySaver" -> result.success(MediaTools.openBatterySaver(this))
             "openAppSettings" -> result.success(MediaTools.openAppSettings(this))
             "isXiaomi" -> result.success(MediaTools.isXiaomiFamily())
+            "shareText" -> result.success(MediaTools.shareText(this, call.argument<String>("text").orEmpty()))
             "nasServers" -> result.success(NasStore.all(ctx).map { it.toPublicMap() })
             "nasSave" -> {
                 val m = call.arguments as Map<*, *>
@@ -178,14 +179,44 @@ class MainActivity : FlutterActivity() {
                     ?: return result.error("nas", "Unknown server", null)
                 background(result) { Ledger.load(server).toStatsMap() }
             }
+            "nasScan" -> {
+                val server = NasStore.get(ctx, call.argument<String>("id")!!)
+                    ?: return result.error("nas", "Unknown server", null)
+                val path = call.argument<String>("path").orEmpty()
+                background(result) {
+                    val ledger = Ledger.load(server)
+                    val found = mutableListOf<Map<String, Any?>>()
+                    Smb.walk(server, path) { e ->
+                        if (!NasRunner.isCandidate(e.name)) return@walk
+                        val issue = ledger.issue(e.path)
+                        found += mapOf(
+                            "path" to e.path,
+                            "name" to e.name,
+                            "size" to e.size,
+                            "top" to (if (e.path.contains('/')) e.path.substringBefore('/') else ""),
+                            "status" to when {
+                                ledger.isDone(e.path, e.size) -> "done"
+                                issue != null -> issue.optString("t")
+                                else -> "new"
+                            },
+                            "reason" to issue?.optString("r"),
+                        )
+                    }
+                    found.sortedByDescending { it["size"] as Long }
+                }
+            }
             "nasStart" -> {
                 @Suppress("UNCHECKED_CAST")
                 val qualities = (call.argument<Map<String, Number>>("qualities") ?: emptyMap()).mapValues { it.value.toInt() }
+                val files = call.argument<List<Map<String, Any?>>>("files")?.map {
+                    (it["path"] as String) to (it["size"] as Number).toLong()
+                }
                 val error = NasRunner.start(
                     call.argument<String>("id")!!,
                     call.argument<String>("path").orEmpty(),
                     qualities,
                     call.argument<String>("mime") ?: "video/hevc",
+                    files,
                 )
                 if (error == null) CompressionService.start(this)
                 result.success(error)

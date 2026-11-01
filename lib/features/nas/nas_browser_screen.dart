@@ -9,6 +9,7 @@ import '../../core/models.dart';
 import '../../core/nas.dart';
 import '../../widgets/common.dart';
 import '../shell/home_shell.dart';
+import 'nas_pick_screen.dart';
 
 const _videoExt = {'mkv', 'mp4', 'm4v', 'mov', 'avi', 'wmv', 'ts', 'm2ts', 'webm'};
 
@@ -129,10 +130,26 @@ class _NasBrowserScreenState extends State<NasBrowserScreen> {
                   listenable: jobs,
                   builder: (context, _) {
                     final busy = jobs.nas?.active ?? false;
-                    return GradientButton(
-                      label: busy ? 'A NAS run is already going' : (_atRoot ? 'Squish everything' : 'Squish this folder'),
-                      icon: Icons.compress_rounded,
-                      onPressed: busy ? null : _start,
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                              builder: (_) => NasPickScreen(server: widget.server, path: widget.path),
+                            )),
+                            icon: const Icon(Icons.sort_rounded),
+                            label: const Text('Pick videos · biggest first'),
+                          ),
+                        ),
+                        const SizedBox(height: SquishyTokens.space2),
+                        GradientButton(
+                          label: busy ? 'A NAS run is already going' : (_atRoot ? 'Squish everything' : 'Squish this folder'),
+                          icon: Icons.compress_rounded,
+                          onPressed: busy ? null : _start,
+                        ),
+                      ],
                     );
                   },
                 ),

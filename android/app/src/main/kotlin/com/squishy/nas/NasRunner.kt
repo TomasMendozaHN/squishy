@@ -48,6 +48,9 @@ object NasRunner {
     private val VIDEO_EXT = setOf("mkv", "mp4", "m4v", "mov")
     private val SKIP_EXT = setOf("avi", "wmv", "ts", "m2ts", "webm", "flv", "mpg", "mpeg", "vob", "iso")
 
+    /** Files a NAS run looks at (the rest are ignored). */
+    fun isCandidate(name: String) = name.substringAfterLast('.', "").lowercase().let { it in VIDEO_EXT || it in SKIP_EXT }
+
     private lateinit var appContext: Context
     private lateinit var stateFile: File
     private val main = Handler(Looper.getMainLooper())
@@ -85,13 +88,23 @@ object NasRunner {
 
     // ---- control -------------------------------------------------------------------
 
-    fun start(serverId: String, root: String, qualities: Map<String, Int>, mime: String): String? {
+    /**
+     * Starts a run over [root] (and all subfolders), or over exactly [files]
+     * (path → size) when the user picked them from the scan list.
+     */
+    fun start(serverId: String, root: String, qualities: Map<String, Int>, mime: String, files: List<Pair<String, Long>>? = null): String? {
         if (active) return "A NAS run is already in progress"
         val nas = NasStore.get(appContext, serverId) ?: return "Unknown server"
         run = JSONObject().apply {
             put("serverId", serverId); put("serverName", nas.name); put("root", root.trim('/'))
             put("mime", mime); put("qualities", JSONObject(qualities as Map<*, *>))
-            put("status", "scanning"); put("files", JSONArray()); put("index", 0)
+            if (files == null) {
+                put("status", "scanning"); put("files", JSONArray())
+            } else {
+                put("status", "running"); put("found", files.size)
+                put("files", JSONArray().apply { files.forEach { (p, s) -> put(JSONObject().put("p", p).put("s", s)) } })
+            }
+            put("index", 0)
             put("done", 0); put("failed", 0); put("skipped", 0); put("saved", 0L)
             put("startedAt", System.currentTimeMillis())
         }

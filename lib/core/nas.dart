@@ -155,6 +155,46 @@ class NasRunStatus {
   bool get canResume => status == 'cancelled' || status == 'failed';
 }
 
+/// One video found by a recursive scan, with what the ledger knows about it.
+class NasScanEntry {
+  const NasScanEntry({
+    required this.path,
+    required this.name,
+    required this.size,
+    required this.top,
+    required this.status,
+    required this.reason,
+  });
+
+  factory NasScanEntry.fromMap(Map<dynamic, dynamic> m) => NasScanEntry(
+        path: m['path'] as String,
+        name: m['name'] as String,
+        size: (m['size'] as num).toInt(),
+        top: m['top'] as String? ?? '',
+        status: m['status'] as String? ?? 'new',
+        reason: m['reason'] as String?,
+      );
+
+  final String path;
+  final String name;
+  final int size;
+
+  /// Library (top-level folder) it belongs to.
+  final String top;
+
+  /// 'new', 'done', 'skipped' or 'failed'.
+  final String status;
+  final String? reason;
+
+  bool get done => status == 'done';
+
+  /// Folder path below the library, for display.
+  String get folder {
+    final i = path.lastIndexOf('/');
+    return i > 0 ? path.substring(0, i) : '';
+  }
+}
+
 abstract final class NasNative {
   static const _channel = MethodChannel('squishy/native');
 
@@ -177,14 +217,28 @@ abstract final class NasNative {
   static Future<NasStats> stats(String id) async =>
       NasStats.fromMap((await _channel.invokeMapMethod('nasStats', {'id': id}))!);
 
-  /// Returns an error message, or null when the run started.
+  /// Every video below [path] (all subfolders), biggest first.
+  static Future<List<NasScanEntry>> scan(String id, String path) async =>
+      ((await _channel.invokeListMethod<Map>('nasScan', {'id': id, 'path': path})) ?? [])
+          .map(NasScanEntry.fromMap)
+          .toList();
+
+  /// Returns an error message, or null when the run started. With [files], only
+  /// those videos are processed (no folder scan).
   static Future<String?> start({
     required String id,
     required String path,
     required Map<String, int> qualities,
     required String mime,
+    List<NasScanEntry>? files,
   }) =>
-      _channel.invokeMethod<String>('nasStart', {'id': id, 'path': path, 'qualities': qualities, 'mime': mime});
+      _channel.invokeMethod<String>('nasStart', {
+        'id': id,
+        'path': path,
+        'qualities': qualities,
+        'mime': mime,
+        if (files != null) 'files': [for (final f in files) {'path': f.path, 'size': f.size}],
+      });
 
   static Future<void> cancel() => _channel.invokeMethod('nasCancel');
   static Future<void> resume() => _channel.invokeMethod('nasResume');

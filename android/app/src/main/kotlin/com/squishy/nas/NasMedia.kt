@@ -154,6 +154,8 @@ class Ledger(private val root: JSONObject) {
     /** Files that failed or were skipped, by path (latest reason wins). */
     private val issues: JSONObject get() = root.optJSONObject("issues") ?: JSONObject().also { root.put("issues", it) }
 
+    fun issue(path: String): JSONObject? = issues.optJSONObject(path)
+
     fun recordIssue(path: String, kind: String, reason: String) {
         issues.put(path, JSONObject().put("t", kind).put("r", reason).put("at", System.currentTimeMillis()))
     }
