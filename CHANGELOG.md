@@ -3,6 +3,27 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.0.1] - 2026-11-01
+
+### Added
+- **Play and share compressed videos right from the app.** Finished videos on the Squish
+  screen, in History and in the file browser have **WhatsApp** (always first; opens the
+  contact picker), **Gmail** (opens a new email with the video; Gmail sends files over 25 MB
+  as a Google Drive link), **Play** (system video player) and **Share with…** buttons.
+  Tapping a finished video plays it.
+
+### Fixed
+- **`ERROR_CODE_MUXING_TIMEOUT: Muxer Error` when compressing several videos at once.**
+  Media3 aborted a job when its muxer got no frames for about 10 s, which happens when
+  parallel jobs fight over the phone's hardware encoder or the phone throttles with the screen off.
+  The watchdog now allows 60 s (single job) or 3 min (parallel).
+- Jobs that fail with an encoder, decoder or muxer error are now **retried once
+  automatically, on their own** (nothing else runs in parallel during the retry). The
+  original is still only deleted after a verified success.
+
+### Changed
+- **Default is now 1 video at a time** (the most reliable). 2 or 3 at once is still available in Settings.
+
 ## [2.0.0] - 2026-11-01
 
 Complete rewrite in Flutter, with a new native compression engine. Requires **Android 16+**.
