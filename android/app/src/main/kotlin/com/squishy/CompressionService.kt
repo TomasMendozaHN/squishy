@@ -22,10 +22,17 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.effect.Presentation
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.transformer.AudioEncoderSettings
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultAssetLoaderFactory
+import androidx.media3.transformer.DefaultDecoderFactory
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -36,6 +43,7 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFprobeKit
 import com.arthenica.ffmpegkit.ReturnCode
 import com.squishy.nas.NasRunner
 import java.io.File
@@ -233,7 +241,23 @@ class CompressionService : Service() {
             MimeTypes.VIDEO_H264
         } else job.mime
         job.encoderLabel = if (mime == MimeTypes.VIDEO_H265) "H.265" else "H.264"
-        return Transformer.Builder(this)
+        val builder = Transformer.Builder(this)
+        if (job.attempts > 0) {
+            // The retry decodes in software: a phone's hardware decoder can hang for good on one
+            // odd frame (always at the same spot) that a software decoder just gets through.
+            job.encoderLabel += ", software decoder"
+            val softwareFirst = MediaCodecSelector { mimeType, secure, tunneling ->
+                MediaCodecUtil.getDecoderInfos(mimeType, secure, tunneling).sortedByDescending { it.softwareOnly }
+            }
+            val decoderFactory = DefaultDecoderFactory.Builder(this)
+                .setMediaCodecSelector(softwareFirst)
+                .setEnableDecoderFallback(true)
+                .build()
+            builder.setAssetLoaderFactory(
+                DefaultAssetLoaderFactory(this, decoderFactory, Clock.DEFAULT, DefaultMediaSourceFactory(this), DataSourceBitmapLoader(this))
+            )
+        }
+        return builder
             .setVideoMimeType(mime)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
@@ -259,7 +283,9 @@ class CompressionService : Service() {
                         if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
                             retrySolo(job)
                         } else {
-                            fail(job, "${exportException.errorCodeName}${where(job)}: ${exportException.message ?: "export failed"}${retryNote(job)}${details(job)}")
+                            // Media3 puts the whole codec configuration in the message; the codec name is enough.
+                            val message = (exportException.message ?: "export failed").replace(Regex("configurationFormat=\\{.*?\\}, "), "")
+                            failWithScan(job, "${exportException.errorCodeName}${where(job)}: $message${retryNote(job)}${details(job)}")
                         }
                     }
                     pump()
@@ -406,6 +432,77 @@ class CompressionService : Service() {
         File(job.videoTempPath).delete()
     }
 
+    /**
+     * Fails a job whose video got stuck, after scanning the source around that spot so the
+     * report says what's there. The job stays "running" (but not active) until the scan is
+     * done; a cancel in the meantime wins.
+     */
+    private fun failWithScan(job: Job, reason: String) {
+        if (job.isCut || job.expectedDurationMs <= 0) {
+            fail(job, reason)
+            return
+        }
+        probeAround(job.input, (job.expectedDurationMs * job.encodeFraction).toLong()) { found ->
+            if (job.status == JobStatus.running) {
+                fail(job, reason, found)
+                pump()
+            }
+        }
+    }
+
+    /**
+     * Scans about 25 s of the video around [atMs] with FFmpeg's own decoder and reports what it finds:
+     * decode errors, size changes and timestamp jumps. Runs off the main thread; [done] is called
+     * on the main thread.
+     */
+    private fun probeAround(path: String, atMs: Long, done: (String) -> Unit) {
+        val from = max(0L, atMs - 10_000) / 1000.0
+        Thread {
+            val text = runCatching {
+                val session = FFprobeKit.executeWithArguments(arrayOf(
+                    "-v", "error", "-select_streams", "v:0", "-read_intervals", "%.1f%%+25".format(java.util.Locale.US, from),
+                    "-show_entries", "frame=pts_time,pict_type,width,height", "-of", "compact=p=0", path,
+                ))
+                summarizeProbe(session.output.orEmpty(), from)
+            }.getOrElse { "Scan failed: ${it.message}" }
+            main.post { done(text) }
+        }.start()
+    }
+
+    private fun summarizeProbe(output: String, from: Double): String {
+        val frames = mutableListOf<Triple<Double, String, String>>() // time, size, type
+        val errors = mutableListOf<String>()
+        for (line in output.lines().map { it.trim() }.filter { it.isNotEmpty() }) {
+            if ("pts_time=" in line) {
+                val f = line.split('|').associate { it.substringBefore('=') to it.substringAfter('=') }
+                val t = f["pts_time"]?.toDoubleOrNull() ?: continue
+                frames += Triple(t, "${f["width"]}×${f["height"]}", f["pict_type"].orEmpty())
+            } else {
+                errors += line.take(160)
+            }
+        }
+        fun ts(t: Double) = MediaTools.formatTime((t * 1000).toLong())
+        // FFmpeg starts at the keyframe before [from], so the real range is what was read.
+        val range = if (frames.isEmpty()) "from ${ts(from)}" else "${ts(frames.first().first)}–${ts(frames.last().first)}"
+        val out = mutableListOf("Scan of $range (FFmpeg): ${frames.size} frames, ${errors.size} decode errors")
+        if (frames.isNotEmpty()) {
+            val sizes = frames.map { it.second }.distinct()
+            if (sizes.size > 1) {
+                val change = frames.zipWithNext().first { it.first.second != it.second.second }
+                out += "Resolution changes at ${ts(change.second.first)}: ${sizes.joinToString(" → ")}"
+            }
+            val gap = frames.zipWithNext().maxByOrNull { it.second.first - it.first.first }
+            if (gap != null && gap.second.first - gap.first.first > 0.5) {
+                out += "Timestamp jump at ${ts(gap.first.first)}: %.1f s".format(java.util.Locale.US, gap.second.first - gap.first.first)
+            }
+            val back = frames.zipWithNext().firstOrNull { it.second.first < it.first.first }
+            if (back != null) out += "Timestamps go backwards at ${ts(back.first.first)}"
+            out += "Keyframes: ${frames.filter { it.third == "I" }.joinToString(" ") { ts(it.first) }.ifEmpty { "none" }}"
+        }
+        out += errors.distinct().take(4)
+        return out.joinToString("\n")
+    }
+
     private fun retryNote(job: Job) =
         if (job.attempts > 0) " (also failed when retried on its own with ${job.encoderLabel}, video and audio done separately)" else ""
 
@@ -436,10 +533,10 @@ class CompressionService : Service() {
         JobManager.changed()
     }
 
-    private fun fail(job: Job, reason: String) {
+    private fun fail(job: Job, reason: String, scan: String? = null) {
         job.status = JobStatus.failed
         job.error = reason + pausedNote(job)
-        job.diag = MediaTools.recentLog()
+        job.diag = listOfNotNull(scan, MediaTools.recentLog()).filter { it.isNotBlank() }.joinToString("\n")
         File(job.tempPath).delete()
         File(job.videoTempPath).delete()
         sessionFailed++
@@ -515,9 +612,10 @@ class CompressionService : Service() {
             job.lastProgressAt = 0
             if (job.attempts == 0) {
                 retrySolo(job)
+            } else if (muxing) {
+                fail(job, "Adding the audio stalled: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             } else {
-                val what = if (muxing) "Adding the audio stalled" else "Encoder stalled${where(job)}"
-                fail(job, "$what: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
+                failWithScan(job, "Encoder stalled${where(job)}: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             }
         }
         if (stalled.isNotEmpty() || revive.isNotEmpty()) pump()

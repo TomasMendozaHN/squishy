@@ -193,6 +193,11 @@ flutter build apk --release
 Release builds are signed with the key described in `android/key.properties`, which is
 gitignored and kept outside the repo. Without that file the build falls back to the debug key.
 
+## Design
+
+The look and feel (tokens, themes, components, motion, copy) is written up in
+[style.md](style.md), a guide you can hand to other apps so they follow the same philosophy.
+
 ## Credits
 
 - The videos in the screenshots are open-movie clips: *Big Buck Bunny* and *Sintel*

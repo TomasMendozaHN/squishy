@@ -3,6 +3,25 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.1.3] - 2026-11-02
+
+### Fixed
+- **A video that always gets stuck at the same spot** (seen at 35:17 of a 1:46:56 video, also
+  with the app open and the screen on). The retry now decodes the video with the phone's
+  **software decoder** instead of the hardware one, so it takes a different path past the
+  spot where the hardware decoder hangs. It's slower, but it only runs on the retry.
+
+### Added
+- **Scan of the stuck spot.** When a video fails for good, Squishy reads about 25 seconds
+  around the point where it stopped with FFmpeg's own decoder. It adds what it finds to
+  **Send details**: damaged frames, a resolution change in the middle of the video,
+  timestamp jumps, and where the keyframes are.
+- `style.md`: Squishy's design philosophy (tokens, colors, components, motion, copy) as a
+  guide other apps can follow.
+
+### Changed
+- Codec error messages no longer include Media3's full codec configuration dump.
+
 ## [2.1.2] - 2026-11-02
 
 ### Fixed

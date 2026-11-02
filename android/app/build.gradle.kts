@@ -76,6 +76,8 @@ dependencies {
     implementation("androidx.media3:media3-transformer:$media3")
     implementation("androidx.media3:media3-effect:$media3")
     implementation("androidx.media3:media3-common:$media3")
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-datasource:$media3")
     implementation("androidx.core:core-ktx:1.16.0")
 
     // NAS: SMB2/3 client (+ BouncyCastle for NTLM's MD4, which Android lacks)
