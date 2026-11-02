@@ -42,13 +42,32 @@ class Job(
     /** Run with nothing else in parallel (set when retrying). */
     var solo = false
 
-    // Runtime only: stall detection and the encoder actually used.
+    // Runtime only: stall detection (progress, output growth, time the system kept the app
+    // paused), the encoder actually used, how far the encoder got (0..1 of the video) and the
+    // FFmpeg session while safe mode muxes the audio.
     var lastProgressAt = 0L
+    var lastBytes = 0L
+    var pauses = 0
+    var pausedMs = 0L
+    var resumedAt = 0L
+    var pauseRestarts = 0
     var encoderLabel = ""
+    var encodeFraction = 0.0
+    var ffmpegSession: Long? = null
 
+    /** Recent codec/muxer log lines, saved with a failure so "Send details" can include them. */
+    var diag: String? = null
 
     val isCut get() = kind == "cut"
     val tempPath get() = "$output.squishy-tmp.mp4"
+    val videoTempPath get() = "$output.squishy-vid.mp4"
+
+    /**
+     * Safe mode (the retry): the video is encoded on its own and FFmpeg adds the audio
+     * afterwards, so a broken audio track can't hold the video encoder up. Cuts keep the
+     * normal path because their audio has to be cut too.
+     */
+    val safe get() = attempts > 0 && !isCut
     val name get() = input.substringAfterLast('/')
 
     fun toMap(): Map<String, Any?> = mapOf(
@@ -87,6 +106,7 @@ class Job(
         put("startedAt", startedAt); put("finishedAt", finishedAt)
         put("qualityLabel", qualityLabel); put("codecLabel", codecLabel)
         put("originalDeleted", originalDeleted)
+        put("diag", diag ?: JSONObject.NULL)
     }
 
     companion object {
@@ -173,6 +193,7 @@ object JobManager {
                     val job = Job.fromJson(arr.getJSONObject(i))
                     // Anything that was mid-flight when the process died starts over.
                     File(job.tempPath).delete()
+                    File(job.videoTempPath).delete()
                     jobs[job.id] = job
                 }
             }

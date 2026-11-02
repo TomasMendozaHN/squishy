@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -34,6 +35,8 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.VideoEncoderSettings
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.ReturnCode
 import com.squishy.nas.NasRunner
 import java.io.File
 import kotlin.math.abs
@@ -58,8 +61,29 @@ class CompressionService : Service() {
             context.startForegroundService(Intent(context, CompressionService::class.java).setAction(action))
         }
 
-        /** A running job with no progress for this long is considered stuck. */
+        /** In safe mode the video encode is this share of the progress bar; the audio mux is the rest. */
+        private const val ENCODE_SHARE = 0.95
+
+        /**
+         * A running job with no progress for this long is considered stuck: a few minutes on
+         * the first attempt (so a real hang gets its retry quickly), longer on the retry.
+         */
+        private const val FIRST_STALL_MS = 3 * 60_000L
         private const val STALL_MS = 10 * 60_000L
+
+        /**
+         * The ticker runs every 500 ms. A longer gap means the system kept the whole app paused
+         * (HyperOS/MIUI freeze background apps); that time is not counted as a stall.
+         */
+        private const val PAUSE_GAP_MS = 15_000L
+
+        /**
+         * After a long pause the codec service may have dropped its buffers and the encoder
+         * never moves again. If nothing moves this long after a pause, the job starts over
+         * (up to MAX_PAUSE_RESTARTS times, without using up its retry).
+         */
+        private const val RESUME_GRACE_MS = 45_000L
+        private const val MAX_PAUSE_RESTARTS = 3
 
         /** Resource-contention failures that usually succeed when the job runs alone. */
         private val RETRYABLE = setOf(
@@ -72,8 +96,8 @@ class CompressionService : Service() {
             ExportException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED,
         )
 
-        /** Live transformers, so the activity can cancel a single job. */
-        val active = mutableMapOf<String, Transformer>()
+        /** Running jobs and their transformer (null while safe mode muxes the audio with FFmpeg). */
+        val active = mutableMapOf<String, Transformer?>()
         var instance: CompressionService? = null
     }
 
@@ -84,11 +108,38 @@ class CompressionService : Service() {
     private var sessionFailed = 0
     private var sessionSaved = 0L
 
+    private var lastTick = 0L
+
     private val ticker = object : Runnable {
         override fun run() {
+            val now = SystemClock.elapsedRealtime()
+            if (lastTick > 0 && now - lastTick > PAUSE_GAP_MS) onPaused(now - lastTick)
+            lastTick = now
             pollProgress()
             main.postDelayed(this, 500)
         }
+    }
+
+    /** The app was frozen for [gap] ms: restart the stall clocks and remember it for the report. */
+    private fun onPaused(gap: Long) {
+        val now = System.currentTimeMillis()
+        for (id in active.keys) {
+            val job = JobManager.jobs[id] ?: continue
+            job.lastProgressAt = now
+            job.resumedAt = now
+            job.pauses++
+            job.pausedMs += gap
+        }
+    }
+
+    /** The encoder didn't come back after a pause: run the job again from the start. */
+    private fun restartAfterPause(job: Job) {
+        stopWork(job)
+        job.pauseRestarts++
+        job.resumedAt = 0
+        job.status = JobStatus.queued
+        job.progress = 0.0
+        JobManager.saveQueue()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -117,7 +168,7 @@ class CompressionService : Service() {
 
     override fun onDestroy() {
         main.removeCallbacks(ticker)
-        active.values.forEach { it.cancel() }
+        active.keys.toList().mapNotNull { JobManager.jobs[it] }.forEach { stopWork(it) }
         active.clear()
         wakeLock?.let { if (it.isHeld) it.release() }
         instance = null
@@ -149,14 +200,18 @@ class CompressionService : Service() {
         job.startedAt = System.currentTimeMillis()
         job.lastProgressAt = job.startedAt
         job.progress = 0.0
+        job.encodeFraction = 0.0
+        job.lastBytes = 0
+        job.resumedAt = 0
         try {
             val input = File(job.input)
             if (!input.exists()) throw IllegalStateException("Source file no longer exists")
             File(job.output).parentFile?.mkdirs()
             File(job.tempPath).delete()
+            File(job.videoTempPath).delete()
             val transformer = buildTransformer(job)
             active[job.id] = transformer
-            transformer.start(buildComposition(job), job.tempPath)
+            transformer.start(buildComposition(job), if (job.safe) job.videoTempPath else job.tempPath)
         } catch (t: Throwable) {
             active.remove(job.id)
             fail(job, t.message ?: t.javaClass.simpleName)
@@ -183,18 +238,16 @@ class CompressionService : Service() {
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
             .setLooper(Looper.getMainLooper())
-            // Media3 aborts if the muxer gets no samples for a while (ERROR_CODE_MUXING_TIMEOUT).
-            // First attempt: generous limits. Retry: Media3's timer is off and our own stall
-            // detector (pollProgress) only gives up when progress hasn't moved for STALL_MS.
-            .setMaxDelayBetweenMuxerSamplesMs(
-                when {
-                    job.attempts > 0 -> C.TIME_UNSET
-                    job.solo || JobManager.parallel == 1 -> 60_000L
-                    else -> 180_000L
-                }
-            )
+            // Media3's muxer timer (ERROR_CODE_MUXING_TIMEOUT) also fires right after the system
+            // unfreezes a paused app, killing a healthy export. It's off; pollProgress detects
+            // real stalls instead and doesn't count paused time.
+            .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    if (job.safe) {
+                        muxAudio(job)
+                        return
+                    }
                     active.remove(job.id)
                     complete(job)
                     pump()
@@ -206,7 +259,7 @@ class CompressionService : Service() {
                         if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
                             retrySolo(job)
                         } else {
-                            fail(job, "${exportException.errorCodeName}: ${exportException.message ?: "export failed"}${retryNote(job)}${details(job)}")
+                            fail(job, "${exportException.errorCodeName}${where(job)}: ${exportException.message ?: "export failed"}${retryNote(job)}${details(job)}")
                         }
                     }
                     pump()
@@ -236,7 +289,7 @@ class CompressionService : Service() {
                     .build()
             }
         }
-        val edited = mediaItems.map { EditedMediaItem.Builder(it).setEffects(effects).build() }
+        val edited = mediaItems.map { EditedMediaItem.Builder(it).setEffects(effects).setRemoveAudio(job.safe).build() }
         val sequence = EditedMediaItemSequence.Builder(edited).build()
         return Composition.Builder(sequence)
             // Phone cameras often record HDR; SDR output is smaller and plays everywhere.
@@ -285,8 +338,88 @@ class CompressionService : Service() {
         JobManager.finish(job)
     }
 
+    /**
+     * Safe mode, step 2: FFmpeg puts the source's audio next to the encoded video. The audio is
+     * re-encoded to AAC with gaps filled by silence, so odd audio tracks (gaps, late start,
+     * early end) are fixed instead of stalling the export.
+     */
+    private fun muxAudio(job: Job) {
+        active[job.id] = null
+        job.lastProgressAt = System.currentTimeMillis()
+        job.progress = ENCODE_SHARE
+        job.encodeFraction = 1.0
+        val video = File(job.videoTempPath)
+        val temp = File(job.tempPath)
+        if (!MediaTools.hasAudio(job.input)) {
+            active.remove(job.id)
+            if (video.renameTo(temp)) complete(job) else fail(job, "Could not write the output file")
+            pump()
+            return
+        }
+        val args = arrayOf(
+            "-y", "-hide_banner", "-loglevel", "error",
+            "-i", video.path, "-i", job.input,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "${max(job.audioBitrate, 64000)}",
+            "-af", "aresample=async=1:first_pts=0",
+            "-max_muxing_queue_size", "9999",
+            "-movflags", "+faststart",
+            temp.path,
+        )
+        val session = FFmpegKit.executeWithArgumentsAsync(
+            args,
+            { s ->
+                main.post {
+                    // A cancel or stall already cleaned up; otherwise it's ours to finish.
+                    if (job.status != JobStatus.running || job.id !in active || active[job.id] != null) return@post
+                    active.remove(job.id)
+                    job.ffmpegSession = null
+                    video.delete()
+                    if (ReturnCode.isSuccess(s.returnCode)) {
+                        complete(job)
+                    } else {
+                        val log = s.allLogsAsString?.lines()?.lastOrNull { it.isNotBlank() }?.take(200)
+                        fail(job, "Adding the audio failed: ${log ?: "FFmpeg error ${s.returnCode}"}${details(job)}")
+                    }
+                    pump()
+                }
+            },
+            { },
+            { stats ->
+                if (job.expectedDurationMs > 0) main.post {
+                    val p = ENCODE_SHARE + (1 - ENCODE_SHARE) * (stats.time / job.expectedDurationMs).coerceIn(0.0, 1.0)
+                    if (p > job.progress) job.lastProgressAt = System.currentTimeMillis()
+                    job.progress = p
+                }
+            },
+        )
+        job.ffmpegSession = session.sessionId
+    }
+
+    /** Stops whatever is running for this job (encoder or audio mux) and removes temp files. */
+    private fun stopWork(job: Job) {
+        active.remove(job.id)?.cancel()
+        job.ffmpegSession?.let { FFmpegKit.cancel(it) }
+        job.ffmpegSession = null
+        File(job.tempPath).delete()
+        File(job.videoTempPath).delete()
+    }
+
     private fun retryNote(job: Job) =
-        if (job.attempts > 0) " (also failed when retried on its own with ${job.encoderLabel})" else ""
+        if (job.attempts > 0) " (also failed when retried on its own with ${job.encoderLabel}, video and audio done separately)" else ""
+
+    /** Where in the video the encoder was, e.g. " at 37% (0:33 of 1:30)". */
+    private fun where(job: Job): String {
+        val pct = (job.encodeFraction * 100).toInt()
+        if (job.expectedDurationMs <= 0) return " at $pct%"
+        val at = (job.expectedDurationMs * job.encodeFraction).toLong()
+        return " at $pct% (${MediaTools.formatTime(at)} of ${MediaTools.formatTime(job.expectedDurationMs)})"
+    }
+
+    private fun pausedNote(job: Job) =
+        if (job.pauses == 0) "" else " · Android paused Squishy ${job.pauses}× in the background " +
+            "(${MediaTools.formatTime(job.pausedMs)} total). Settings → Background reliability → Battery saver → No restrictions"
 
     /** Source format + encoder, so a failure report says what kind of video broke. */
     private fun details(job: Job) = " [${MediaTools.describe(job.input)} → ${job.width}×${job.height} ${job.encoderLabel}]"
@@ -294,6 +427,7 @@ class CompressionService : Service() {
     /** Puts a job back at the front of the queue to run alone, once. */
     private fun retrySolo(job: Job) {
         File(job.tempPath).delete()
+        File(job.videoTempPath).delete()
         job.attempts++
         job.solo = true
         job.status = JobStatus.queued
@@ -304,8 +438,10 @@ class CompressionService : Service() {
 
     private fun fail(job: Job, reason: String) {
         job.status = JobStatus.failed
-        job.error = reason
+        job.error = reason + pausedNote(job)
+        job.diag = MediaTools.recentLog()
         File(job.tempPath).delete()
+        File(job.videoTempPath).delete()
         sessionFailed++
         JobManager.finish(job)
     }
@@ -313,8 +449,7 @@ class CompressionService : Service() {
     fun cancel(id: String) {
         val job = JobManager.jobs[id] ?: return
         if (job.status != JobStatus.queued && job.status != JobStatus.running) return
-        active.remove(id)?.cancel()
-        File(job.tempPath).delete()
+        stopWork(job)
         job.status = JobStatus.cancelled
         job.error = "Cancelled"
         JobManager.finish(job)
@@ -327,8 +462,7 @@ class CompressionService : Service() {
             .map { it.id }
             .forEach { id ->
                 val job = JobManager.jobs[id]!!
-                active.remove(id)?.cancel()
-                File(job.tempPath).delete()
+                stopWork(job)
                 job.status = JobStatus.cancelled
                 job.error = "Cancelled"
                 JobManager.finish(job)
@@ -343,25 +477,50 @@ class CompressionService : Service() {
         if (active.isEmpty()) return
         val now = System.currentTimeMillis()
         val stalled = mutableListOf<Job>()
+        val revive = mutableListOf<Job>()
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
-            if (transformer.getProgress(progressHolder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-                val p = progressHolder.progress / 100.0
+            // While FFmpeg adds the audio (transformer == null) its stats callback moves progress.
+            if (transformer?.getProgress(progressHolder) == Transformer.PROGRESS_STATE_AVAILABLE) {
+                job.encodeFraction = progressHolder.progress / 100.0
+                val p = job.encodeFraction * (if (job.safe) ENCODE_SHARE else 1.0)
                 if (p > job.progress || job.lastProgressAt == 0L) job.lastProgressAt = now
                 job.progress = p
             }
-            if (job.lastProgressAt > 0 && now - job.lastProgressAt > STALL_MS) stalled += job
+            // Progress is whole percents (minutes apart on a long movie); a growing output file
+            // also counts as alive.
+            if (transformer != null) {
+                val bytes = File(if (job.safe) job.videoTempPath else job.tempPath).length()
+                if (bytes > job.lastBytes) {
+                    job.lastBytes = bytes
+                    job.lastProgressAt = now
+                }
+            }
+            if (job.resumedAt > 0) {
+                // A last flush right after the resume doesn't count; it has to keep moving.
+                if (job.lastProgressAt > job.resumedAt + 10_000) {
+                    job.resumedAt = 0
+                } else if (now - job.resumedAt > RESUME_GRACE_MS && job.pauseRestarts < MAX_PAUSE_RESTARTS) {
+                    revive += job
+                    continue
+                }
+            }
+            val limit = if (job.attempts == 0) FIRST_STALL_MS else STALL_MS
+            if (job.lastProgressAt > 0 && now - job.lastProgressAt > limit) stalled += job
         }
+        revive.forEach { restartAfterPause(it) }
         for (job in stalled) {
-            active.remove(job.id)?.cancel()
+            val muxing = job.id in active && active[job.id] == null
+            stopWork(job)
             job.lastProgressAt = 0
             if (job.attempts == 0) {
                 retrySolo(job)
             } else {
-                fail(job, "Encoder stalled: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
+                val what = if (muxing) "Adding the audio stalled" else "Encoder stalled${where(job)}"
+                fail(job, "$what: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             }
         }
-        if (stalled.isNotEmpty()) pump()
+        if (stalled.isNotEmpty() || revive.isNotEmpty()) pump()
         JobManager.changed()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
     }

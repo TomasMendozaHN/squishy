@@ -161,6 +161,7 @@ class LogEntry {
     required this.qualityLabel,
     required this.codecLabel,
     required this.originalDeleted,
+    this.diag,
   });
 
   factory LogEntry.fromMap(Map<String, dynamic> m) => LogEntry(
@@ -177,6 +178,7 @@ class LogEntry {
         qualityLabel: m['qualityLabel'] as String? ?? '',
         codecLabel: m['codecLabel'] as String? ?? '',
         originalDeleted: m['originalDeleted'] as bool? ?? false,
+        diag: m['diag'] as String?,
       );
 
   final String id;
@@ -192,6 +194,9 @@ class LogEntry {
   final String qualityLabel;
   final String codecLabel;
   final bool originalDeleted;
+
+  /// Recent codec/muxer log lines saved with a failure, for "Send details".
+  final String? diag;
 
   String get name => input.split('/').last;
   int get savedBytes => success && kind != 'cut' ? inputSize - outputSize : 0;

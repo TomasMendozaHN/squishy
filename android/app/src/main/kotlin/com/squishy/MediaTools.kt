@@ -126,6 +126,40 @@ object MediaTools {
         }
     }
 
+    fun hasAudio(path: String): Boolean {
+        val ex = MediaExtractor()
+        return try {
+            ex.setDataSource(path)
+            (0 until ex.trackCount).any { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+        } catch (_: Throwable) {
+            true
+        } finally {
+            ex.release()
+        }
+    }
+
+    fun formatTime(ms: Long): String {
+        val s = ms / 1000
+        return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+    }
+
+    private val LOG_KEYS = listOf("transformer", "codec", "muxer", "media3", "exception", "extractor", "encoder", "decoder", "ffmpeg")
+
+    // Harmless lines every Codec2 device prints; they would crowd out the real error.
+    private val LOG_NOISE = listOf("param skipped", "Media Quality Service", "required system resources", "max input size", "BAD_INDEX", "mapper.")
+
+    /** Last codec/muxer warnings and errors from this app's own log (no permission needed). */
+    fun recentLog(): String = runCatching {
+        val p = ProcessBuilder("logcat", "-d", "-t", "3000", "-v", "time", "--pid=${android.os.Process.myPid()}", "*:W")
+            .redirectErrorStream(true)
+            .start()
+        val lines = p.inputStream.bufferedReader().readLines()
+        p.waitFor()
+        lines.filter { l -> LOG_KEYS.any { l.contains(it, ignoreCase = true) } && LOG_NOISE.none { l.contains(it) } }
+            .takeLast(15)
+            .joinToString("\n") { it.take(240) }
+    }.getOrDefault("")
+
     fun shareText(context: Context, text: String) = tryStart(
         context,
         listOf(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Send details")),
