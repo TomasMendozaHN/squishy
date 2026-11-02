@@ -371,6 +371,7 @@ class _LogTile extends StatelessWidget {
       'Squishy $version on ${device.manufacturer} ${device.model} (Android API ${device.sdk})',
       'File: ${entry.name}',
       for (final (k, v) in rows) '$k: $v',
+      if (entry.diag?.isNotEmpty ?? false) ...['', 'Log:', entry.diag!],
     ].join('\n');
     await SquishyNative.shareText(text);
   }

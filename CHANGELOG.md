@@ -3,6 +3,28 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.1.2] - 2026-11-02
+
+### Fixed
+- **Healthy videos killed with `ERROR_CODE_MUXING_TIMEOUT` or "Encoder stalled".** Xiaomi
+  (HyperOS/MIUI) and some other phones pause background apps for minutes at a time. As soon as
+  Squishy was let go again, Media3's muxer timer and the stall detector both saw the long gap and
+  killed the job, even though nothing was wrong with the video. Confirmed on the emulator: a
+  90-second pause made 2.1.1 abort the export the instant the app resumed. Now:
+  - Media3's muxer timer is off. Squishy's own stall detector notices when the app was paused
+    and doesn't count that time
+  - the stall detector also treats a growing output file as progress, so long movies (where 1%
+    can take minutes) aren't mistaken for stuck
+  - a real hang is detected after 3 minutes on the first try (it was 10)
+- **The automatic retry is now a "safe mode":** the video is encoded on its own and FFmpeg adds
+  the audio afterwards (re-encoded to AAC, gaps filled with silence). A broken or oddly timed
+  audio track can't hold up the video anymore.
+
+### Added
+- Failure reasons say **where** it got stuck (e.g. `at 37% (41:10 of 1:51:00)`) and, if Android
+  paused Squishy, how often and for how long, with a pointer to the battery setting to change.
+- **Send details** now includes the last codec/muxer log lines.
+
 ## [2.1.1] - 2026-11-01
 
 ### Added
