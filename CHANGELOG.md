@@ -13,6 +13,9 @@ each version has a matching git tag and a GitHub Release with the APK.
   90-second pause made 2.1.1 abort the export the instant the app resumed. Now:
   - Media3's muxer timer is off. Squishy's own stall detector notices when the app was paused
     and doesn't count that time
+  - after a long pause the phone's codec service can drop its buffers, leaving the encoder dead
+    for good (seen on the emulator after a 4-minute pause). If nothing moves within 45 s of
+    the app resuming, that video simply starts over (up to 3 times, without using up its retry)
   - the stall detector also treats a growing output file as progress, so long movies (where 1%
     can take minutes) aren't mistaken for stuck
   - a real hang is detected after 3 minutes on the first try (it was 10)

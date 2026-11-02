@@ -49,6 +49,8 @@ class Job(
     var lastBytes = 0L
     var pauses = 0
     var pausedMs = 0L
+    var resumedAt = 0L
+    var pauseRestarts = 0
     var encoderLabel = ""
     var encodeFraction = 0.0
     var ffmpegSession: Long? = null

@@ -77,6 +77,14 @@ class CompressionService : Service() {
          */
         private const val PAUSE_GAP_MS = 15_000L
 
+        /**
+         * After a long pause the codec service may have dropped its buffers and the encoder
+         * never moves again. If nothing moves this long after a pause, the job starts over
+         * (up to MAX_PAUSE_RESTARTS times, without using up its retry).
+         */
+        private const val RESUME_GRACE_MS = 45_000L
+        private const val MAX_PAUSE_RESTARTS = 3
+
         /** Resource-contention failures that usually succeed when the job runs alone. */
         private val RETRYABLE = setOf(
             ExportException.ERROR_CODE_MUXING_TIMEOUT,
@@ -112,14 +120,26 @@ class CompressionService : Service() {
         }
     }
 
-    /** The app was frozen for [gap] ms: shift the stall clocks and remember it for the report. */
+    /** The app was frozen for [gap] ms: restart the stall clocks and remember it for the report. */
     private fun onPaused(gap: Long) {
+        val now = System.currentTimeMillis()
         for (id in active.keys) {
             val job = JobManager.jobs[id] ?: continue
-            if (job.lastProgressAt > 0) job.lastProgressAt += gap
+            job.lastProgressAt = now
+            job.resumedAt = now
             job.pauses++
             job.pausedMs += gap
         }
+    }
+
+    /** The encoder didn't come back after a pause: run the job again from the start. */
+    private fun restartAfterPause(job: Job) {
+        stopWork(job)
+        job.pauseRestarts++
+        job.resumedAt = 0
+        job.status = JobStatus.queued
+        job.progress = 0.0
+        JobManager.saveQueue()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -182,6 +202,7 @@ class CompressionService : Service() {
         job.progress = 0.0
         job.encodeFraction = 0.0
         job.lastBytes = 0
+        job.resumedAt = 0
         try {
             val input = File(job.input)
             if (!input.exists()) throw IllegalStateException("Source file no longer exists")
@@ -456,6 +477,7 @@ class CompressionService : Service() {
         if (active.isEmpty()) return
         val now = System.currentTimeMillis()
         val stalled = mutableListOf<Job>()
+        val revive = mutableListOf<Job>()
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
             // While FFmpeg adds the audio (transformer == null) its stats callback moves progress.
@@ -474,9 +496,19 @@ class CompressionService : Service() {
                     job.lastProgressAt = now
                 }
             }
+            if (job.resumedAt > 0) {
+                // A last flush right after the resume doesn't count; it has to keep moving.
+                if (job.lastProgressAt > job.resumedAt + 10_000) {
+                    job.resumedAt = 0
+                } else if (now - job.resumedAt > RESUME_GRACE_MS && job.pauseRestarts < MAX_PAUSE_RESTARTS) {
+                    revive += job
+                    continue
+                }
+            }
             val limit = if (job.attempts == 0) FIRST_STALL_MS else STALL_MS
             if (job.lastProgressAt > 0 && now - job.lastProgressAt > limit) stalled += job
         }
+        revive.forEach { restartAfterPause(it) }
         for (job in stalled) {
             val muxing = job.id in active && active[job.id] == null
             stopWork(job)
@@ -488,7 +520,7 @@ class CompressionService : Service() {
                 fail(job, "$what: no progress for ${STALL_MS / 60_000} minutes${retryNote(job)}${details(job)}")
             }
         }
-        if (stalled.isNotEmpty()) pump()
+        if (stalled.isNotEmpty() || revive.isNotEmpty()) pump()
         JobManager.changed()
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
     }
