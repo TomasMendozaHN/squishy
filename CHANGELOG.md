@@ -3,6 +3,17 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.2.1] - 2026-11-03
+
+### Fixed
+- **`OutOfMemoryError` crashing Squishy while it was open and compressing.** The phone's own
+  diagnostics report showed 4+ GB of RAM free and a normal temperature, but Squishy's
+  allocation failed anyway: Android gives every app a fixed Java heap (256 MB by default)
+  regardless of how much RAM the phone has, and Squishy never asked for more. Compressing a
+  long or high-resolution video can need more than that. Squishy now requests Android's
+  large-heap allocation (`android:largeHeap`), which on most phones gives it 512 MB–1 GB+
+  instead of 256 MB.
+
 ## [2.2.0] - 2026-11-03
 
 ### Added
