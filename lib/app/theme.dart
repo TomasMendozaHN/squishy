@@ -118,23 +118,25 @@ ThemeData buildTheme({
   required AppFont font,
   required bool reduceMotion,
 }) {
+  // Accent and status colors double as text, so they must be readable on the surface.
+  final p = palette.readable();
   final colors = FlexSchemeColor(
-    primary: palette.primary,
+    primary: p.primary,
     primaryContainer: Color.alphaBlend(
-      palette.primary.withValues(alpha: 0.22),
-      palette.surface,
+      p.primary.withValues(alpha: 0.22),
+      p.surface,
     ),
-    secondary: palette.secondary,
+    secondary: p.secondary,
     secondaryContainer: Color.alphaBlend(
-      palette.secondary.withValues(alpha: 0.22),
-      palette.surface,
+      p.secondary.withValues(alpha: 0.22),
+      p.surface,
     ),
-    tertiary: palette.tertiary,
+    tertiary: p.tertiary,
     tertiaryContainer: Color.alphaBlend(
-      palette.tertiary.withValues(alpha: 0.22),
-      palette.surface,
+      p.tertiary.withValues(alpha: 0.22),
+      p.surface,
     ),
-    error: palette.danger,
+    error: p.danger,
   );
   final sub = FlexSubThemesData(
     defaultRadius: corners.base,
@@ -148,7 +150,7 @@ ThemeData buildTheme({
     cardElevation: 0,
     chipRadius: corners.base,
   );
-  final dark = palette.brightness == Brightness.dark;
+  final dark = p.brightness == Brightness.dark;
   final base = dark
       ? FlexThemeData.dark(
           colors: colors,
@@ -165,13 +167,13 @@ ThemeData buildTheme({
           visualDensity: VisualDensity.standard,
         );
 
-  final scheme = base.colorScheme.copyWith(surface: palette.surface);
+  final scheme = base.colorScheme.copyWith(surface: p.surface);
   return base.copyWith(
     colorScheme: scheme,
-    scaffoldBackgroundColor: palette.background,
-    canvasColor: palette.background,
+    scaffoldBackgroundColor: p.background,
+    canvasColor: p.background,
     navigationBarTheme: base.navigationBarTheme.copyWith(
-      backgroundColor: palette.surface,
+      backgroundColor: p.surface,
       surfaceTintColor: Colors.transparent,
     ),
     textTheme: GoogleFonts.getTextTheme(font.family, base.textTheme),

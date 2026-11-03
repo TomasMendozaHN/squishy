@@ -71,7 +71,7 @@
 |:---:|:---:|:---:|:---:|
 | <img src="docs/screenshots/08_cut_editor.png" width="200"> | <img src="docs/screenshots/18_share.png" width="200"> | <img src="docs/screenshots/06_notification.png" width="200"> | <img src="docs/screenshots/14_settings.png" width="200"> |
 
-**Personalization:** themes, progress animations and chart styles, each previewed live.
+**Personalization:** 44 color themes plus your own custom theme, 15 chart styles, progress animations, 13 fonts and layout options, each previewed live, in tabs.
 
 | Themes | Progress animations | Chart styles | Midnight Violet theme |
 |:---:|:---:|:---:|:---:|
