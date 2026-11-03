@@ -40,7 +40,7 @@ class HistoryController extends ChangeNotifier {
   }
 
   List<LogEntry> get successes => entries.where((e) => e.success).toList();
-  List<LogEntry> get failures => entries.where((e) => !e.success).toList();
+  List<LogEntry> get failures => entries.where((e) => !e.success && e.kind != 'crash').toList();
   int get savedBytes => entries.fold(0, (s, e) => s + e.savedBytes);
 
   double get averageReduction {

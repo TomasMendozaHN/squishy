@@ -3,6 +3,27 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.1.4] - 2026-11-03
+
+### Fixed
+- **Squishy closing by itself, even while on screen.** When a video got stuck, Squishy stopped
+  it after 3 minutes. Two things could then take the whole app down:
+  - Media3's `cancel()` waits until the codecs are released. With a stuck hardware decoder
+    that wait never ends, and Squishy called it on the main thread, which froze the app until
+    Android closed it. Each video now runs on its own thread, and stopping one never blocks
+    the app. NAS mode too.
+  - When the stuck codec came back, Media3's internal thread threw an error while ending the
+    stopped export (`TransformerInternal.endInternal`), which crashed the app. Reproduced on
+    the emulator by freezing the codec service. That error now only ends Media3's thread; the
+    app keeps going and the retry starts.
+
+### Added
+- **"App closed" entries in History.** Android keeps a record of why it closed an app: crash,
+  not responding, low memory, too much battery use. On the next start, Squishy adds each
+  unexpected close to History, with whether it was on screen and the phone's last known
+  state: battery temperature, heat level, charging, free memory. **Send details** includes
+  all of it, plus the crash or freeze trace.
+
 ## [2.1.3] - 2026-11-02
 
 ### Fixed

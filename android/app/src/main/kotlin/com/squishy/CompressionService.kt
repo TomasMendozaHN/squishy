@@ -14,6 +14,7 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -106,12 +107,19 @@ class CompressionService : Service() {
 
         /** Running jobs and their transformer (null while safe mode muxes the audio with FFmpeg). */
         val active = mutableMapOf<String, Transformer?>()
+
+        /**
+         * Each transformer lives on its own thread. Media3's cancel() waits until the codecs
+         * are released, and a stuck hardware decoder can make that wait forever; on the main
+         * thread that froze the whole app until Android closed it.
+         */
+        private val workers = mutableMapOf<String, Handler>()
         var instance: CompressionService? = null
     }
 
     private val main = Handler(Looper.getMainLooper())
     private var wakeLock: PowerManager.WakeLock? = null
-    private val progressHolder = ProgressHolder()
+    private var lastStateSave = 0L
     private var sessionDone = 0
     private var sessionFailed = 0
     private var sessionSaved = 0L
@@ -124,6 +132,10 @@ class CompressionService : Service() {
             if (lastTick > 0 && now - lastTick > PAUSE_GAP_MS) onPaused(now - lastTick)
             lastTick = now
             pollProgress()
+            if (active.isNotEmpty() && now - lastStateSave > 30_000) {
+                lastStateSave = now
+                ExitReasons.saveState(this@CompressionService)
+            }
             main.postDelayed(this, 500)
         }
     }
@@ -217,16 +229,34 @@ class CompressionService : Service() {
             File(job.output).parentFile?.mkdirs()
             File(job.tempPath).delete()
             File(job.videoTempPath).delete()
-            val transformer = buildTransformer(job)
+            val worker = Handler(HandlerThread("squish-${job.id}").apply { start() }.looper)
+            val run = ++job.run
+            val transformer = buildTransformer(job, worker.looper, run)
+            val composition = buildComposition(job)
+            val out = if (job.safe) job.videoTempPath else job.tempPath
             active[job.id] = transformer
-            transformer.start(buildComposition(job), if (job.safe) job.videoTempPath else job.tempPath)
+            workers[job.id] = worker
+            job.rawProgress = -1
+            worker.post {
+                try {
+                    transformer.start(composition, out)
+                } catch (t: Throwable) {
+                    main.post {
+                        if (job.run != run) return@post
+                        stopWork(job)
+                        fail(job, t.message ?: t.javaClass.simpleName)
+                        pump()
+                    }
+                }
+            }
         } catch (t: Throwable) {
-            active.remove(job.id)
+            stopWork(job)
             fail(job, t.message ?: t.javaClass.simpleName)
         }
     }
 
-    private fun buildTransformer(job: Job): Transformer {
+    /** Callbacks arrive on [looper] and are handed to the main thread; [run] drops stale ones. */
+    private fun buildTransformer(job: Job, looper: Looper, run: Int): Transformer {
         val encoderFactory = DefaultEncoderFactory.Builder(this)
             .setRequestedVideoEncoderSettings(
                 VideoEncoderSettings.Builder().setBitrate(job.videoBitrate).build()
@@ -261,23 +291,25 @@ class CompressionService : Service() {
             .setVideoMimeType(mime)
             .setAudioMimeType(MimeTypes.AUDIO_AAC)
             .setEncoderFactory(encoderFactory)
-            .setLooper(Looper.getMainLooper())
+            .setLooper(looper)
             // Media3's muxer timer (ERROR_CODE_MUXING_TIMEOUT) also fires right after the system
             // unfreezes a paused app, killing a healthy export. It's off; pollProgress detects
             // real stalls instead and doesn't count paused time.
             .setMaxDelayBetweenMuxerSamplesMs(C.TIME_UNSET)
             .addListener(object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) = onMain {
+                    releaseWorker(job)
                     if (job.safe) {
                         muxAudio(job)
-                        return
+                        return@onMain
                     }
                     active.remove(job.id)
                     complete(job)
                     pump()
                 }
 
-                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
+                override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) = onMain {
+                    releaseWorker(job)
                     active.remove(job.id)
                     if (job.status == JobStatus.running) {
                         if (job.attempts == 0 && exportException.errorCode in RETRYABLE) {
@@ -290,8 +322,17 @@ class CompressionService : Service() {
                     }
                     pump()
                 }
+
+                private fun onMain(block: () -> Unit) {
+                    main.post { if (job.run == run) block() }
+                }
             })
             .build()
+    }
+
+    /** The transformer finished; its thread can end. */
+    private fun releaseWorker(job: Job) {
+        workers.remove(job.id)?.looper?.quitSafely()
     }
 
     private fun buildComposition(job: Job): Composition {
@@ -425,7 +466,14 @@ class CompressionService : Service() {
 
     /** Stops whatever is running for this job (encoder or audio mux) and removes temp files. */
     private fun stopWork(job: Job) {
-        active.remove(job.id)?.cancel()
+        job.run++ // ignore anything the old transformer still reports
+        val transformer = active.remove(job.id)
+        val worker = workers.remove(job.id)
+        if (transformer != null && worker != null) {
+            // If the codec is stuck, cancel() never returns; only this job's thread is left waiting.
+            worker.post { runCatching { transformer.cancel() } }
+            worker.looper.quitSafely()
+        }
         job.ffmpegSession?.let { FFmpegKit.cancel(it) }
         job.ffmpegSession = null
         File(job.tempPath).delete()
@@ -577,9 +625,16 @@ class CompressionService : Service() {
         val revive = mutableListOf<Job>()
         for ((id, transformer) in active) {
             val job = JobManager.jobs[id] ?: continue
+            // Progress is read on the transformer's thread and picked up on the next tick.
+            if (transformer != null) {
+                workers[id]?.post {
+                    val holder = ProgressHolder()
+                    if (transformer.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) job.rawProgress = holder.progress
+                }
+            }
             // While FFmpeg adds the audio (transformer == null) its stats callback moves progress.
-            if (transformer?.getProgress(progressHolder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-                job.encodeFraction = progressHolder.progress / 100.0
+            if (transformer != null && job.rawProgress >= 0) {
+                job.encodeFraction = job.rawProgress / 100.0
                 val p = job.encodeFraction * (if (job.safe) ENCODE_SHARE else 1.0)
                 if (p > job.progress || job.lastProgressAt == 0L) job.lastProgressAt = now
                 job.progress = p

@@ -55,6 +55,12 @@ class Job(
     var encodeFraction = 0.0
     var ffmpegSession: Long? = null
 
+    /** Counts transformer starts, so callbacks from a stopped one are ignored. */
+    var run = 0
+
+    /** Last progress (0..100) read on the transformer's own thread; -1 until known. */
+    @Volatile var rawProgress = -1
+
     /** Recent codec/muxer log lines, saved with a failure so "Send details" can include them. */
     var diag: String? = null
 
@@ -198,6 +204,7 @@ object JobManager {
                 }
             }
         }
+        ExitReasons.init(context)
     }
 
     fun setParallel(context: Context, value: Int) {

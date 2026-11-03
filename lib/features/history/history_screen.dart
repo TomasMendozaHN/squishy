@@ -320,7 +320,9 @@ class _LogTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(t.radiusSm),
             ),
             child: Icon(
-              !ok
+              entry.kind == 'crash'
+                  ? Icons.power_settings_new_rounded
+                  : !ok
                   ? Icons.close_rounded
                   : switch (entry.kind) {
                       'cut' => Icons.content_cut_rounded,
@@ -378,9 +380,9 @@ class _LogTile extends StatelessWidget {
 
   void _details(BuildContext context) {
     final rows = <(String, String)>[
-      ('Result', entry.success ? 'Squished' : 'Failed'),
+      ('Result', entry.success ? 'Squished' : entry.kind == 'crash' ? 'App closed' : 'Failed'),
       if (entry.error != null) ('Reason', entry.error!),
-      ('Type', switch (entry.kind) { 'cut' => 'Cut & join', 'nas' => 'NAS (in place)', _ => 'Compress' }),
+      ('Type', switch (entry.kind) { 'cut' => 'Cut & join', 'nas' => 'NAS (in place)', 'crash' => 'Squishy was closed', _ => 'Compress' }),
       ('Source', entry.input),
       if (entry.success) ('Output', entry.output),
       ('Quality', '${entry.qualityLabel} · ${entry.codecLabel}'),

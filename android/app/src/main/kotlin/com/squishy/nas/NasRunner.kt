@@ -5,6 +5,7 @@ package com.squishy.nas
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.StatFs
 import androidx.annotation.OptIn
@@ -67,9 +68,12 @@ object NasRunner {
     @Volatile private var fileProgress = 0.0
     @Volatile private var lastError: String? = null
 
-    /** The active video encode; polled for progress on the main thread. */
+    /**
+     * The active video encode and the thread it runs on. Media3's cancel() can wait forever on
+     * a stuck codec, so it must never run on the main thread.
+     */
     @Volatile var transformer: Transformer? = null
-    private val holder = ProgressHolder()
+    @Volatile private var encodeHandler: Handler? = null
     @Volatile private var encodeWeight = 0.0
 
     val encoding get() = transformer != null
@@ -117,7 +121,10 @@ object NasRunner {
 
     fun cancel() {
         cancelled = true
-        main.post { transformer?.cancel() }
+        val t = transformer
+        val h = encodeHandler
+        transformer = null
+        if (t != null && h != null) h.post { runCatching { t.cancel() } }
         FFmpegKit.cancel()
         run?.put("status", "cancelled")
         save()
@@ -443,7 +450,9 @@ object NasRunner {
     private fun encode(url: String, out: File, w: Int, h: Int, bitrate: Int, hevc: Boolean, keepHdr: Boolean): String? {
         out.delete()
         val result = CompletableFuture<String?>()
-        main.post {
+        val handler = Handler(HandlerThread("squishy-nas-encode").apply { start() }.looper)
+        encodeHandler = handler
+        handler.post {
             try {
                 val t = Transformer.Builder(appContext)
                     .setVideoMimeType(if (hevc) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264)
@@ -453,7 +462,7 @@ object NasRunner {
                             .setEnableFallback(true)
                             .build()
                     )
-                    .setLooper(Looper.getMainLooper())
+                    .setLooper(handler.looper)
                     // Network reads can stall; don't let the muxer watchdog kill a long movie.
                     .setMaxDelayBetweenMuxerSamplesMs(300_000L)
                     .addListener(object : Transformer.Listener {
@@ -480,21 +489,29 @@ object NasRunner {
                 result.complete(e.message ?: e.javaClass.simpleName)
             }
         }
-        // Cancel unblocks via onError/null transformer; poll so a cancel can't hang us.
-        while (true) {
-            try {
-                return result.get(2, TimeUnit.SECONDS)
-            } catch (_: java.util.concurrent.TimeoutException) {
-                if (cancelled && transformer == null && !result.isDone) return "Cancelled"
+        // Poll so a cancel can't hang us, even if the transformer never reports back.
+        try {
+            while (true) {
+                try {
+                    return result.get(2, TimeUnit.SECONDS)
+                } catch (_: java.util.concurrent.TimeoutException) {
+                    if (cancelled && !result.isDone) return "Cancelled"
+                }
             }
+        } finally {
+            encodeHandler = null
+            handler.looper.quitSafely()
         }
     }
 
-    /** Main thread: copies the encoder's progress into the run status. */
+    /** Main thread tick: has the encode thread copy the encoder's progress into the run status. */
     fun pollEncodeProgress() {
         val t = transformer ?: return
-        if (t.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
-            fileProgress = holder.progress / 100.0 * encodeWeight
+        encodeHandler?.post {
+            val holder = ProgressHolder()
+            if (t.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) {
+                fileProgress = holder.progress / 100.0 * encodeWeight
+            }
         }
     }
 
