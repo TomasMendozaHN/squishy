@@ -3,6 +3,14 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.3.0] - 2026-11-03
+
+### Added
+- **17 new progress animations** (was 4, now 21): Battery, Thermometer, Blob, Dot grid,
+  Spiral, Hourglass, Orbit, Radar, Ripple, Constellation, Clock, Bloom, Waveform, Minimal
+  bar, Confetti, Staircase and Scribble, alongside the original Water tank, Liquid orb, Glow
+  ring and Equalizer. Pick one in Style → Progress, previewed live like everything else.
+
 ## [2.2.1] - 2026-11-03
 
 ### Fixed

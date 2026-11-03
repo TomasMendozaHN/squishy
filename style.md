@@ -176,7 +176,9 @@ themes) or black (light themes) until it reaches a 4.5:1 contrast with the surfa
 
 ### The hero visual
 Every app gets **one signature animated visual** for its main state. In Squishy that's
-progress, shown as a water tank, liquid orb, glow ring or equalizer that the user can switch
+progress, shown as any of 21 styles (water tank, liquid orb, glow ring, equalizer, battery,
+thermometer, blob, dot grid, spiral, hourglass, orbit, radar, ripple, constellation, clock,
+bloom, waveform, minimal bar, confetti, staircase, scribble) that the user can switch
 between. Guidelines:
 - Drawn in code (CustomPainter/canvas), liquid gradient, a soft outer glow.
 - An ambient loop (~6 s) keeps it alive. The real value **eases toward** new readings over

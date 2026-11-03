@@ -286,7 +286,11 @@ class _ProgressTab extends StatelessWidget {
     final s = context.scope.settings;
     return _OptionGrid(
       count: ProgressStyle.values.length,
-      header: const [SectionHeader('Progress animation', subtitle: 'What you watch while it squishes')],
+      minWidth: 120,
+      aspect: 0.78,
+      header: [
+        SectionHeader('Progress animation', subtitle: '${ProgressStyle.values.length} ways to watch it squish'),
+      ],
       itemBuilder: (context, i) {
         final p = ProgressStyle.values[i];
         return _OptionCard(

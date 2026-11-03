@@ -8,7 +8,24 @@ enum ProgressStyle {
   waterTank('Water tank', 'Liquid rises with waves and bubbles'),
   liquidOrb('Liquid orb', 'A glass sphere slowly filling up'),
   glowRing('Glow ring', 'Neon ring with a sloshing core'),
-  equalizer('Equalizer', 'Bars that light up as it squishes');
+  equalizer('Equalizer', 'Bars that light up as it squishes'),
+  battery('Battery', 'Charges up like a phone battery'),
+  thermometer('Thermometer', 'Liquid rises in a glass tube'),
+  blob('Blob', 'A squishy jelly blob that grows'),
+  dotGrid('Dot grid', 'Dots fill in one by one'),
+  spiral('Spiral', 'A glowing line winds inward'),
+  hourglass('Hourglass', 'Sand drains from top to bottom'),
+  orbit('Orbit', 'A comet circles a filling ring'),
+  radar('Radar', 'A sweeping scanner line'),
+  ripple('Ripple', 'Rings ripple out from a growing core'),
+  constellation('Constellation', 'Stars connect one by one'),
+  clockHands('Clock', 'A hand sweeps around a dial'),
+  bloom('Bloom', 'Petals open one at a time'),
+  waveform('Waveform', 'An audio wave fills left to right'),
+  minimalBar('Minimal bar', 'A clean capsule with a shimmer'),
+  confetti('Confetti', 'Pieces fall and pile up'),
+  staircase('Staircase', 'A ball climbs a staircase'),
+  scribble('Scribble', 'A glowing doodle traces itself');
 
   const ProgressStyle(this.label, this.hint);
   final String label;
