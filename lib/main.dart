@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import 'app/scope.dart';
 import 'app/theme.dart';
-import 'app/theme_presets.dart';
 import 'core/history_controller.dart';
 import 'core/jobs_controller.dart';
 import 'core/native.dart';
@@ -37,13 +36,13 @@ class SquishyApp extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         ThemeData themeFor(Brightness b) => buildTheme(
-              palette: settings.themePreset.palette(b),
+              palette: settings.paletteFor(b),
               corners: settings.corners,
               font: settings.font,
               reduceMotion: settings.reduceMotion,
             );
-        final follow = settings.themePreset == ThemePreset.followSystem;
-        final fixed = settings.themePreset.palette(Brightness.dark).brightness;
+        final follow = settings.followsSystem;
+        final fixed = settings.paletteFor(Brightness.dark).brightness;
         return MaterialApp(
           title: 'Squishy',
           debugShowCheckedModeBanner: false,

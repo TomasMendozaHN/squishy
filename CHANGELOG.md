@@ -3,6 +3,29 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.2.0] - 2026-11-03
+
+### Added
+- **44 color themes** (was 5), 28 dark and 16 light. Many are well-known color schemes that
+  are tried and tested for readability: Dracula, Nord, Gruvbox, Solarized, Catppuccin, Tokyo
+  Night, One Dark, Monokai, Rosé Pine, Everforest, Kanagawa, Ayu, Night Owl, Palenight,
+  Cobalt, Poimandres, GitHub. There are also new originals like Deep Sea, Aurora, Ember,
+  Royal Gold, Sakura, Meadow and Paper. Filter them by All / Dark / Light.
+- **Custom theme**: pick dark or light, a main color and an accent color from 28 swatches.
+  Squishy works out the rest, and the app changes live while you pick.
+- **15 chart styles** (was 4): area, smooth line, straight line, steps, running total,
+  bubbles, bars, capsules, sideways bars, videos per day, calendar heatmap (12 weeks), donut,
+  pie, gauge and radar.
+- **13 fonts** (was 5): Poppins, Manrope, DM Sans, Lexend, Rubik, Sora, Fredoka and Comfortaa
+  are new.
+
+### Changed
+- The **Style** tab is split into tabs: **Colors · Progress · Charts · Fonts · Layout**.
+  Cards load as you scroll, so the long lists stay smooth.
+- Accent and status colors in every theme are automatically adjusted to at least 4.5:1
+  contrast, so text in those colors is always readable. A few colors in the original
+  themes are slightly darker or lighter as a result.
+
 ## [2.1.4] - 2026-11-03
 
 ### Fixed

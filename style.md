@@ -76,7 +76,8 @@ Cards have elevation 0. Surfaces get no surface tint.
 
 ### Typography
 - One Google Font family for the whole app, chosen by the user: **Quicksand (default)**,
-  Outfit, Inter, Space Grotesk, Nunito.
+  Outfit, Inter, Space Grotesk, Nunito, Poppins, Manrope, DM Sans, Lexend, Rubik, Sora,
+  Fredoka, Comfortaa.
 - The standard Material 3 type scale, with **heavy headings**:
   - screen titles `headlineSmall` w800
   - section headers `titleLarge` w700
@@ -106,7 +107,12 @@ Derived, never hand-picked:
 - **Text on the gradient** = black or white, picked from the gradient's estimated brightness.
 
 ### Presets
-Dark themes use Tailwind-400-like shades; light themes use 600–700 shades for contrast.
+Squishy ships **44 palettes** (28 dark, 16 light), a **Follow system** option and a
+**Custom** theme. Many follow well-known editor color schemes that are proven for long
+reading sessions: Dracula, Nord, Gruvbox, Solarized, Catppuccin, Tokyo Night, One Dark,
+Monokai, Rosé Pine, Everforest, Kanagawa, Ayu, Night Owl, Palenight, Cobalt, Poimandres and
+GitHub. The full list is in `lib/app/theme_presets.dart`. Dark themes use Tailwind-400-like
+shades; light themes use 600–700 shades for contrast. The five originals:
 
 | Theme | Mode | Primary | Secondary | Tertiary | Background | Surface | Liquid A → B | Success / Danger / Warning |
 |---|---|---|---|---|---|---|---|---|
@@ -121,6 +127,16 @@ Brand/mascot colors (separate from themes): cyan `#7DF9FF` → purple `#8B5CF6` 
 face `#1B1035`, cheeks `#FF8FB1`. Launcher/splash background is a deep night `#0B0820`.
 Third-party brand colors (e.g. WhatsApp `#25D366`, Gmail `#EA4335`) are allowed only on
 their own share buttons.
+
+**Custom theme**: the user picks dark or light, a main color and an accent color from a
+swatch grid. Everything else is derived: a background tinted 5% with the main color, a
+surface tinted 9% (dark) or white (light), the tertiary color as a mix of main and accent,
+and standard status colors. Prefer this over letting people pick a color per element (menus,
+borders...): free per-element picking makes it far too easy to end up with unreadable text.
+
+**Readability guard**: before a palette becomes a theme, every color that's also used for
+text (primary, secondary, tertiary, success, danger, warning) is nudged toward white (dark
+themes) or black (light themes) until it reaches a 4.5:1 contrast with the surface.
 
 ### Rules
 - Raw colors only in the palette file. Anything else reads theme roles or tokens.
@@ -198,11 +214,19 @@ drift 30–40 px on slow 7 s and 9 s loops behind content. They're static when r
 
 ## 6. Personalization
 
-Offer a **Style** tab where every option is a **live preview card** in a grid
-(`columns = width / 190`, clamped to 2–5):
-- Theme: each card renders a mini mock of the real UI in that theme.
-- Hero visual style, chart style, list/grid view mode, font, corner shape.
-- Reduce motion switch.
+Offer a **Style** tab where every option is a **live preview card**, split into tabs:
+**Colors · Progress · Charts · Fonts · Layout**. Grids are built lazily (cards appear as
+they scroll in) and the theme previews are cached, so even 40+ cards scroll smoothly.
+- **Colors**: All / Dark / Light filter, then Custom (opens its editor), Follow system and
+  every palette. Each card is a mini mock of the real UI in that theme. Three per row on
+  a phone, name only (up to two lines).
+- **Progress**: the hero visual styles.
+- **Charts**: 15 styles over the same data. Trends (area, smooth line, straight line with
+  dots, steps, running total, bubbles), bars (bars, capsules on a track, sideways bars,
+  videos per day), a calendar heatmap, and quality breakdowns (donut, pie, half-ring gauge,
+  radar).
+- **Fonts**: 13 Google Fonts, previewed as "Aa".
+- **Layout**: list/grid view mode, corner shape, reduce-motion switch.
 
 Changes apply app-wide instantly. Default choices: Obsidian Cyan, water tank, area chart,
 grid view, Quicksand, Soft corners.
@@ -263,7 +287,8 @@ cancelling." Confirmations name both choices ("Keep going" / "Cancel all"), neve
 - [ ] One primary action with the liquid gradient. Everything else is quieter.
 - [ ] Content sits in glass cards with 16 padding and `radiusMd`.
 - [ ] Lists/grids stagger in. Presses squish. Durations come from tokens.
-- [ ] Looks right in all five themes, all three corner styles and all five fonts.
+- [ ] Looks right in a dark and a light theme (try Graphite and Paper), all three corner
+  styles and a wide font like Lexend.
 - [ ] Works with reduce motion (in-app and system) and at 1.3× text.
 - [ ] Has a friendly empty state and plain-language errors.
 - [ ] Two-pane or more columns at 600 px and wider.

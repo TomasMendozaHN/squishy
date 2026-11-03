@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app/theme_presets.dart';
@@ -16,10 +16,21 @@ enum ProgressStyle {
 }
 
 enum ChartStyle {
-  bars('Bars', 'Space saved per day'),
-  line('Smooth line', 'Trend of space saved'),
   area('Area', 'Filled trend with glow'),
-  donut('Donut', 'Space saved by quality');
+  line('Smooth line', 'Trend of space saved'),
+  straight('Straight line', 'Point to point, with dots'),
+  stepped('Steps', 'A staircase, day by day'),
+  cumulative('Total', 'Everything saved so far'),
+  bubbles('Bubbles', 'Bigger bubble, more saved'),
+  bars('Bars', 'Space saved per day'),
+  capsules('Capsules', 'Round bars on a track'),
+  horizontal('Sideways', 'Bars as rows, one per day'),
+  videos('Videos', 'How many squished per day'),
+  heatmap('Heatmap', 'Calendar squares, brighter = more'),
+  donut('Donut', 'Space saved by quality'),
+  pie('Pie', 'Share of each quality'),
+  gauge('Gauge', 'Half ring by quality'),
+  radar('Radar', 'Qualities as a web');
 
   const ChartStyle(this.label, this.hint);
   final String label;
@@ -52,7 +63,15 @@ enum AppFont {
   outfit('Outfit'),
   inter('Inter'),
   spaceGrotesk('Space Grotesk'),
-  nunito('Nunito');
+  nunito('Nunito'),
+  poppins('Poppins'),
+  manrope('Manrope'),
+  dmSans('DM Sans'),
+  lexend('Lexend'),
+  rubik('Rubik'),
+  sora('Sora'),
+  fredoka('Fredoka'),
+  comfortaa('Comfortaa');
 
   const AppFont(this.family);
   final String family;
@@ -94,8 +113,43 @@ class AppSettings extends ChangeNotifier {
   }
 
   // Personalization
-  ThemePreset get themePreset => _enum('theme', ThemePreset.values, ThemePreset.obsidianCyan);
-  set themePreset(ThemePreset v) => _setEnum('theme', v);
+  /// A [ThemeChoice] id, [Themes.followSystemId] or [Themes.customId].
+  String get themeId => _prefs.getString('theme') ?? Themes.defaultId;
+  set themeId(String v) {
+    _prefs.setString('theme', v);
+    notifyListeners();
+  }
+
+  bool get followsSystem => themeId == Themes.followSystemId;
+
+  // The custom theme: dark or light, plus a main and an accent color.
+  bool get customDark => _prefs.getBool('customDark') ?? true;
+  set customDark(bool v) => _setBool('customDark', v);
+
+  Color get customMain => Color(_prefs.getInt('customMain') ?? Themes.swatches[8].toARGB32());
+  set customMain(Color v) {
+    _prefs.setInt('customMain', v.toARGB32());
+    notifyListeners();
+  }
+
+  Color get customAccent => Color(_prefs.getInt('customAccent') ?? Themes.swatches[13].toARGB32());
+  set customAccent(Color v) {
+    _prefs.setInt('customAccent', v.toARGB32());
+    notifyListeners();
+  }
+
+  PresetPalette get customPalette => PresetPalette.custom(
+        brightness: customDark ? Brightness.dark : Brightness.light,
+        main: customMain,
+        accent: customAccent,
+      );
+
+  /// The palette to use; [platform] only matters for "Follow system".
+  PresetPalette paletteFor(Brightness platform) => switch (themeId) {
+        Themes.followSystemId => platform == Brightness.dark ? Themes.systemDark : Themes.systemLight,
+        Themes.customId => customPalette,
+        final id => Themes.byId(id).palette,
+      };
 
   ProgressStyle get progressStyle =>
       _enum('progressStyle', ProgressStyle.values, ProgressStyle.waterTank);

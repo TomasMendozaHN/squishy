@@ -8,6 +8,7 @@ import '../../app/scope.dart';
 import '../../app/theme.dart';
 import '../../core/format.dart';
 import '../../core/models.dart';
+import '../../core/settings.dart';
 import '../../core/nas.dart';
 import '../../core/native.dart';
 import '../../widgets/common.dart';
@@ -177,7 +178,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 height: 240,
                 child: StatsChart(
                   style: scope.settings.chartStyle,
-                  daily: history.daily(),
+                  // The heatmap is a calendar, so it shows 12 weeks instead of 2.
+                  daily: history.daily(days: scope.settings.chartStyle == ChartStyle.heatmap ? 84 : 14),
                   byQuality: history.savedByQuality(),
                 ),
               ),
