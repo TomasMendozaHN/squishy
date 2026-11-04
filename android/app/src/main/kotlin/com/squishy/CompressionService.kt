@@ -619,7 +619,13 @@ class CompressionService : Service() {
         if (NasRunner.active) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_WORK, buildWorkNotification())
         }
-        if (active.isEmpty()) return
+        if (active.isEmpty()) {
+            // A NAS run has no local jobs to poll, but its encoder progress still has
+            // to reach the UI: without this push the Flutter side only learned about
+            // NAS progress when a phase or file changed.
+            if (NasRunner.active) JobManager.changed()
+            return
+        }
         val now = System.currentTimeMillis()
         val stalled = mutableListOf<Job>()
         val revive = mutableListOf<Job>()
