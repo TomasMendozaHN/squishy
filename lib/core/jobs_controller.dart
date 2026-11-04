@@ -44,12 +44,8 @@ class JobsController extends ChangeNotifier {
   bool get isBusy => jobs.any((j) => j.isActive) || (nas?.active ?? false);
   int get runningCount => jobs.where((j) => j.status == JobStatus.running).length;
 
-  /// Overall progress across the current batch (finished jobs count as 1).
-  double get overallProgress {
-    if (jobs.isEmpty) return 0;
-    final total = jobs.fold<double>(0, (sum, j) => sum + (j.isActive ? j.progress : 1));
-    return total / jobs.length;
-  }
+  /// Overall progress across everything the app is working on.
+  double get overallProgress => combinedProgress(jobs, nas);
 
   Duration? get eta {
     final start = _sessionStart;
@@ -62,7 +58,7 @@ class JobsController extends ChangeNotifier {
   void _onJobs(List<JobSnapshot> next) {
     final before = {for (final j in jobs) j.id: j.status};
     final newlyFinished = next.any((j) => !j.isActive && before[j.id] != null && before[j.id] != j.status);
-    if (next.any((j) => j.isActive)) {
+    if (next.any((j) => j.isActive) || (nas?.active ?? false)) {
       _sessionStart ??= DateTime.now();
     } else {
       _sessionStart = null;
@@ -188,4 +184,22 @@ class JobsController extends ChangeNotifier {
     _finishedController.close();
     super.dispose();
   }
+}
+
+/// Overall progress across everything in flight.
+///
+/// While a NAS run is active it counts once, together with any local jobs
+/// *still running* — finished local jobs must not pin the visual at 100 %
+/// while the NAS work keeps going. With no NAS run it is the plain average
+/// over the local batch (finished jobs count as 1).
+double combinedProgress(List<JobSnapshot> jobs, NasRunStatus? nas) {
+  if (nas != null && nas.active) {
+    final running = jobs.where((j) => j.status == JobStatus.running).toList();
+    if (running.isEmpty) return nas.overall;
+    final localP = running.fold<double>(0, (sum, j) => sum + j.progress) / running.length;
+    return (localP + nas.overall) / 2;
+  }
+  if (jobs.isEmpty) return nas?.overall ?? 0;
+  final total = jobs.fold<double>(0, (sum, j) => sum + (j.isActive ? j.progress : 1));
+  return total / jobs.length;
 }

@@ -3,6 +3,21 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
+## [2.3.1] - 2026-11-04
+
+### Fixed
+- **The big progress visual now keeps moving while your NAS is being squished.** Before,
+  it sat frozen at 0 % for the whole run (or stuck at 100 % if you had just finished local
+  videos first), and only showed the truth after you left the app and came back. The phone
+  was doing the work all along - Squishy just wasn't told about it while a NAS encode was
+  running, and the visual only counted local videos. Now: the NAS run drives the visual by
+  itself, local and NAS work share it fairly when both run at once, and the captions say
+  what's happening ("NAS: Compressing video", "1 of 5 · NAS 3 of 40"). The time-remaining
+  estimate now covers NAS runs too.
+- Verified on the emulator with a live SMB share: NAS-only runs move 0 → 100 % untouched,
+  mixed local + NAS runs move together with both counters, and a local batch finishing
+  while the NAS keeps going no longer pins the visual at 100 %.
+
 ## [2.3.0] - 2026-11-03
 
 ### Added

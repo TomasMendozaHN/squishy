@@ -83,14 +83,17 @@ class _Hero extends StatelessWidget {
     final total = jobs.jobs.length;
     final busy = jobs.isBusy;
     final eta = jobs.eta;
-    // With no local videos, the big visual follows the NAS run.
+    // The big visual follows local jobs, the NAS run, or both at once.
     final nas = jobs.nas;
     final nasOnly = total == 0 && nas != null;
+    final nasActive = nas?.active ?? false;
     final caption = nasOnly
         ? (nas.scanning ? 'Finding videos… ${nas.found}' : '${nas.index} of ${nas.total} files')
-        : busy
-            ? '${done + failed} of $total done'
-            : (failed > 0 ? '$done done · $failed failed' : 'All done!');
+        : (busy && nasActive)
+            ? '${done + failed} of $total · NAS ${nas!.index} of ${nas.total}'
+            : busy
+                ? '${done + failed} of $total done'
+                : (failed > 0 ? '$done done · $failed failed' : 'All done!');
     return Padding(
       padding: const EdgeInsets.all(SquishyTokens.space4),
       child: Column(
@@ -106,9 +109,10 @@ class _Hero extends StatelessWidget {
                 ? '${nas.serverName} · ${formatBytes(nas.saved)} saved'
                 : busy
                 ? [
-                    '${jobs.runningCount} running',
+                    if (jobs.runningCount > 0) '${jobs.runningCount} running',
+                    if (nasActive) 'NAS: ${nas!.phase}',
                     if (eta != null) formatEta(eta),
-                  ].join(' · ')
+                  ].where((s) => s.isNotEmpty).join(' · ')
                 : 'Tap the visual to change its style',
             style: context.text.bodyMedium?.copyWith(color: context.colors.onSurfaceVariant),
           ),
@@ -127,7 +131,7 @@ class _Hero extends StatelessWidget {
               child: ProgressVisual(
                 key: ValueKey(settings.progressStyle),
                 style: settings.progressStyle,
-                progress: nasOnly ? nas.overall : jobs.overallProgress,
+                progress: jobs.overallProgress,
                 size: size,
                 caption: caption,
               ),
