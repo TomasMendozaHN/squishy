@@ -3,7 +3,17 @@
 All notable changes to Squishy. Versions follow [Semantic Versioning](https://semver.org/);
 each version has a matching git tag and a GitHub Release with the APK.
 
-## [2.3.1] - 2026-11-04
+## [2.4.0] - 2026-11-24
+
+### Added
+- **Landscape: a wall of mini progress visuals.** In the Squish tab, when the phone is in
+  landscape, a **List / Grid** switch appears above the job list. Grid shows one small
+  progress visual per running or waiting video — no filenames, just the shape and the
+  percent — so several videos squishing at once fit on screen without scrolling. It uses
+  whichever of the 21 progress styles is picked in Style → Progress, same as the big one.
+  Long-press a tile to cancel that video (same as the × button in the list).
+
+
 
 ### Fixed
 - **The big progress visual now keeps moving while your NAS is being squished.** Before,
