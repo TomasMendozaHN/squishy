@@ -220,6 +220,10 @@ class AppSettings extends ChangeNotifier {
   bool get keepScreenOn => _prefs.getBool('keepScreenOn') ?? false;
   set keepScreenOn(bool v) => _setBool('keepScreenOn', v);
 
+  /// Landscape only: a wall of small progress visuals (no filenames) instead of job cards.
+  bool get miniProgressGrid => _prefs.getBool('miniProgressGrid') ?? false;
+  set miniProgressGrid(bool v) => _setBool('miniProgressGrid', v);
+
   // Browser
   bool get showHidden => _prefs.getBool('showHidden') ?? false;
   set showHidden(bool v) => _setBool('showHidden', v);

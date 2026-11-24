@@ -50,7 +50,15 @@ class JobsScreen extends StatelessWidget {
             return Row(
               children: [
                 Expanded(child: Center(child: SingleChildScrollView(child: hero))),
-                Expanded(child: CustomScrollView(slivers: [nasCard, list])),
+                Expanded(
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(child: _ViewToggle(settings: scope.settings)),
+                      nasCard,
+                      if (scope.settings.miniProgressGrid) _JobVisualGrid(jobs: jobs.jobs) else list,
+                    ],
+                  ),
+                ),
               ],
             );
           }
@@ -184,6 +192,99 @@ class _Hero extends StatelessWidget {
       ),
     );
     if (ok == true) jobs.cancelAll();
+  }
+}
+
+/// Landscape only: switches the right-hand pane between job cards (with filenames) and a
+/// wall of small, personalizable progress visuals (without them).
+class _ViewToggle extends StatelessWidget {
+  const _ViewToggle({required this.settings});
+
+  final AppSettings settings;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(SquishyTokens.space2, SquishyTokens.space3, SquishyTokens.space4, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: SegmentedButton<bool>(
+          showSelectedIcon: false,
+          segments: const [
+            ButtonSegment(value: false, icon: Icon(Icons.view_list_rounded), label: Text('List')),
+            ButtonSegment(value: true, icon: Icon(Icons.grid_view_rounded), label: Text('Grid')),
+          ],
+          selected: {settings.miniProgressGrid},
+          onSelectionChanged: (v) => settings.miniProgressGrid = v.first,
+        ),
+      ),
+    );
+  }
+}
+
+/// A wall of small progress visuals, one per active job, with no filenames — for landscape
+/// use when many videos are squishing at once and the full cards take up too much room.
+class _JobVisualGrid extends StatelessWidget {
+  const _JobVisualGrid({required this.jobs});
+
+  final List<JobSnapshot> jobs;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = jobs.where((j) => j.isActive).toList()
+      ..sort((a, b) => (a.status == JobStatus.running ? 0 : 1).compareTo(b.status == JobStatus.running ? 0 : 1));
+    if (active.isEmpty) {
+      return SliverToBoxAdapter(
+        child: EmptyState(
+          icon: const Icon(Icons.grid_view_rounded, size: 64),
+          title: 'Nothing squishing',
+          message: 'Finished videos still show in the list view.',
+        ),
+      );
+    }
+    return SliverPadding(
+      padding: const EdgeInsets.all(SquishyTokens.space3),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 160,
+          mainAxisSpacing: SquishyTokens.space3,
+          crossAxisSpacing: SquishyTokens.space3,
+          childAspectRatio: 1,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, i) => _MiniJobTile(job: active[i])
+              .animate(key: ValueKey(active[i].id))
+              .fadeIn(duration: context.tokens.medium)
+              .scaleXY(begin: 0.9, end: 1),
+          childCount: active.length,
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniJobTile extends StatelessWidget {
+  const _MiniJobTile({required this.job});
+
+  final JobSnapshot job;
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = context.scope.settings;
+    return GlassCard(
+      padding: const EdgeInsets.all(SquishyTokens.space2),
+      // No confirmation, matching the single-job cancel button in the list view.
+      onLongPress: () => context.scope.jobs.cancel(job.id),
+      child: LayoutBuilder(
+        builder: (context, c) => Center(
+          child: ProgressVisual(
+            style: settings.progressStyle,
+            progress: job.status == JobStatus.queued ? 0 : job.progress,
+            size: math.min(c.maxWidth, c.maxHeight),
+          ),
+        ),
+      ),
+    );
   }
 }
 
